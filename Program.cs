@@ -475,6 +475,11 @@ namespace MirrorAudio
             try { if (_resAux  != null) _resAux .Dispose(); } catch { } _resAux  = null;
             _bufMain = null; _bufAux = null;
         }
+        // 启动失败时的静默回收：不弹气泡、不改_running，仅清理已创建对象
+        void CleanupCreated()
+        {
+            DisposeAll();
+        }
 
         // —— 即时状态供设置窗体按需读取 —— //
         public StatusSnapshot GetStatusSnapshot()
