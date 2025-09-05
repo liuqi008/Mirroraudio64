@@ -146,7 +146,7 @@ namespace MirrorAudio
 
         AppSettings _cfg = Config.Load();
         MMDeviceEnumerator _mm;               // 单实例，复用
-        readonly Timer _debounce;             // 单实例，复用
+        readonly System.Windows.Forms.Timer _debounce;             // 单实例，复用
         bool _running;
 
         // 设备 & 音频对象
@@ -196,7 +196,7 @@ namespace MirrorAudio
             _menu.Items.AddRange(new ToolStripItem[]{ miStart, miStop, new ToolStripSeparator(), miSet, miLog, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
-            _debounce = new Timer();
+            _debounce = new System.Windows.Forms.Timer();
             _debounce.Interval = 400;
             _debounce.Tick += OnDebounceTick;
 
