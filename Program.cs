@@ -12,6 +12,7 @@ using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using NAudio.MediaFoundation;
 using NAudio.Wave;
+using WinFormsTimer = System.Windows.Forms.Timer;
 
 namespace MirrorAudio
 {
@@ -79,8 +80,8 @@ namespace MirrorAudio
 
         [DataMember] public ShareModeOption AuxShare = ShareModeOption.Shared;
         [DataMember] public SyncModeOption  AuxSync  = SyncModeOption.Auto;
-        [DataMember] public int AuxRate  = 48000;   // 仅独占生效
-        [DataMember] public int AuxBits  = 16;      // 仅独占生效
+        [DataMember] public int AuxRate  = 48000;   // 独占时生效
+        [DataMember] public int AuxBits  = 16;      // 独占时生效
         [DataMember] public int AuxBufMs = 150;
 
         [DataMember] public bool AutoStart = false;
@@ -146,7 +147,7 @@ namespace MirrorAudio
 
         AppSettings _cfg = Config.Load();
         MMDeviceEnumerator _mm;               // 单实例，复用
-        readonly System.Windows.Forms.Timer _debounce;             // 单实例，复用
+        readonly WinFormsTimer _debounce;     // 单实例，复用
         bool _running;
 
         // 设备 & 音频对象
@@ -169,7 +170,6 @@ namespace MirrorAudio
 
         public TrayApp()
         {
-            // 日志开关
             Logger.Enabled = _cfg.EnableLogging;
 
             _mm = new MMDeviceEnumerator();
@@ -196,7 +196,7 @@ namespace MirrorAudio
             _menu.Items.AddRange(new ToolStripItem[]{ miStart, miStop, new ToolStripSeparator(), miSet, miLog, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
-            _debounce = new System.Windows.Forms.Timer();
+            _debounce = new WinFormsTimer();
             _debounce.Interval = 400;
             _debounce.Tick += OnDebounceTick;
 
@@ -299,7 +299,7 @@ namespace MirrorAudio
             _inFmtStr = Fmt(inFmt);
             if (Logger.Enabled) Logger.Info("Input: " + _inDev.FriendlyName + " | " + _inFmtStr + " | " + _inRoleStr);
 
-            // 两路桥接缓冲（确保足够大避免频繁扩容）
+            // 两路桥接缓冲
             _bufMain = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs * 8, 120)) };
             _bufAux  = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs  * 6, 150)) };
 
@@ -413,7 +413,7 @@ namespace MirrorAudio
                 try { _auxFmtStr = Fmt(_outAux.AudioClient.MixFormat); } catch { _auxFmtStr = "系统混音"; }
             }
 
-            // —— 绑定与启动（方法组，避免闭包分配） —— //
+            // —— 绑定与启动 —— //
             _capture.DataAvailable += OnCaptureDataAvailable;
             _capture.RecordingStopped += OnRecordingStopped;
 
@@ -475,10 +475,13 @@ namespace MirrorAudio
             try { if (_resAux  != null) _resAux .Dispose(); } catch { } _resAux  = null;
             _bufMain = null; _bufAux = null;
         }
+
+        // ★★ 启动失败回滚（静默清理，不改_running，不弹提示） ★★
         void CleanupCreated()
         {
             DisposeAll();
         }
+
         // —— 即时状态供设置窗体按需读取 —— //
         public StatusSnapshot GetStatusSnapshot()
         {
@@ -517,7 +520,7 @@ namespace MirrorAudio
             return "-";
         }
 
-        // —— 工具函数（去掉热路径 LINQ） —— //
+        // —— 工具函数 —— //
         MMDevice FindById(string id, DataFlow flow)
         {
             if (string.IsNullOrEmpty(id)) return null;
@@ -535,7 +538,6 @@ namespace MirrorAudio
             return wf.SampleRate + "Hz/" + wf.BitsPerSample + "bit/" + wf.Channels + "ch";
         }
 
-        // 设备周期缓存：先查缓存，再反射获取一次
         void GetDevicePeriodsMsCached(MMDevice dev, out double defMs, out double minMs)
         {
             defMs = 10.0; minMs = 2.0;
