@@ -5,7 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
-using System.Threading;
+using System.Threading;                    // Mutex, Thread.Sleep
 using System.Windows.Forms;
 using Microsoft.Win32;
 using NAudio.CoreAudioApi;
@@ -13,9 +13,12 @@ using NAudio.CoreAudioApi.Interfaces;
 using NAudio.MediaFoundation;
 using NAudio.Wave;
 
+// 为避免二义性，显式使用 WinForms 计时器
+using WinFormsTimer = System.Windows.Forms.Timer;
+
 namespace MirrorAudio
 {
-    // 轻量日志：先判定再打印，避免无谓字符串分配
+    // 轻量日志（先判定再拼接，降低分配与 IO）
     static class Logger
     {
         public static bool Enabled;
@@ -71,38 +74,36 @@ namespace MirrorAudio
         [DataMember] public string MainDeviceId;
         [DataMember] public string AuxDeviceId;
 
+        // 主通道（低延迟）
         [DataMember] public ShareModeOption MainShare = ShareModeOption.Auto;
         [DataMember] public SyncModeOption  MainSync  = SyncModeOption.Auto;
         [DataMember] public int MainRate  = 192000;
         [DataMember] public int MainBits  = 24;
         [DataMember] public int MainBufMs = 12;
 
+        // 副通道（推流）
         [DataMember] public ShareModeOption AuxShare = ShareModeOption.Shared;
-        [DataMember] public SyncModeOption  AuxSync  = SyncModeOption.Auto;
+        [DataMember] public SyncModeOption  AuxSync  = SyncModeOption.Event; // 统一为“事件优先”更省 CPU
         [DataMember] public int AuxRate  = 48000;   // 仅独占生效
         [DataMember] public int AuxBits  = 16;      // 仅独占生效
-        [DataMember] public int AuxBufMs = 150;
+        [DataMember] public int AuxBufMs = 180;
 
         [DataMember] public bool AutoStart = false;
         [DataMember] public bool EnableLogging = false;
     }
 
+    // —— 状态 —— //
     public class StatusSnapshot
     {
-        public bool Running;
+        public bool   Running;
         public string InputRole;
         public string InputFormat;
         public string InputDevice;
-        public string MainDevice;
-        public string AuxDevice;
-        public string MainMode;
-        public string AuxMode;
-        public string MainSync;
-        public string AuxSync;
-        public string MainFormat;
-        public string AuxFormat;
-        public int MainBufferMs;
-        public int AuxBufferMs;
+        public string MainDevice, AuxDevice;
+        public string MainMode,   AuxMode;
+        public string MainSync,   AuxSync;
+        public string MainFormat, AuxFormat;
+        public int    MainBufferMs, AuxBufferMs;
         public double MainDefaultPeriodMs, MainMinimumPeriodMs;
         public double AuxDefaultPeriodMs,  AuxMinimumPeriodMs;
     }
@@ -138,15 +139,32 @@ namespace MirrorAudio
         }
     }
 
+    // —— 托盘专业渲染（更统一的留白与悬浮高亮） —— //
+    sealed class MinimalRenderer : ToolStripProfessionalRenderer
+    {
+        public MinimalRenderer() : base(new ProfessionalColorTable { UseSystemColors = true }) { }
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            var g = e.Graphics; var r = new Rectangle(Point.Empty, e.Item.Bounds.Size);
+            if (e.Item.Selected && !e.Item.IsOnDropDown)
+                using (var b = new SolidBrush(Color.FromArgb(235, 243, 255))) g.FillRectangle(b, r);
+            else if (e.Item.Selected)
+                using (var b = new SolidBrush(Color.FromArgb(235, 243, 255))) g.FillRectangle(b, r);
+            else
+                using (var b = new SolidBrush(Color.White)) g.FillRectangle(b, r);
+            base.OnRenderMenuItemBackground(e);
+        }
+    }
+
     // —— 主程序 —— //
     sealed class TrayApp : IDisposable, IMMNotificationClient
     {
         readonly NotifyIcon _tray = new NotifyIcon();
-        readonly ContextMenuStrip _menu = new ContextMenuStrip();
+        readonly ContextMenuStrip _menu = new ContextMenuStrip { Renderer = new MinimalRenderer(), ShowCheckMargin = false, ShowImageMargin = true };
 
         AppSettings _cfg = Config.Load();
-        MMDeviceEnumerator _mm;               // 单实例，复用
-        readonly System.Windows.Forms.Timer _debounce;             // 单实例，复用
+        MMDeviceEnumerator _mm;
+        readonly WinFormsTimer _debounce = new WinFormsTimer { Interval = 420 }; // 事件去抖
         bool _running;
 
         // 设备 & 音频对象
@@ -164,18 +182,17 @@ namespace MirrorAudio
         string _mainFmtStr = "-", _auxFmtStr = "-";
         double _defMainMs, _minMainMs, _defAuxMs, _minAuxMs;
 
-        // 设备周期缓存（降低反射与COM调用）
+        // 周期缓存
         readonly Dictionary<string, Tuple<double,double>> _periodCache = new Dictionary<string, Tuple<double,double>>(4);
 
         public TrayApp()
         {
-            // 日志开关
             Logger.Enabled = _cfg.EnableLogging;
 
             _mm = new MMDeviceEnumerator();
             try { _mm.RegisterEndpointNotificationCallback(this); } catch { }
 
-            // Tray icon
+            // 图标：优先 app ico，失败退回系统图标
             try
             {
                 if (File.Exists("MirrorAudio.ico")) _tray.Icon = new Icon("MirrorAudio.ico");
@@ -186,22 +203,33 @@ namespace MirrorAudio
             _tray.Visible = true;
             _tray.Text = "MirrorAudio";
 
-            // 精简托盘菜单
-            var miStart = new ToolStripMenuItem("启动/重启(&S)", null, OnStartClick);
-            var miStop  = new ToolStripMenuItem("停止(&T)", null, OnStopClick);
-            var miSet   = new ToolStripMenuItem("设置(&G)...", null, OnSettingsClick);
-            var miLog   = new ToolStripMenuItem("打开日志目录", null, (s,e)=> Process.Start("explorer.exe", Path.GetTempPath()));
-            var miExit  = new ToolStripMenuItem("退出(&X)", null, (s,e)=> { Stop(); Application.Exit(); });
+            // —— 托盘菜单（更统一的标签与图标） —— //
+            var miStart = new ToolStripMenuItem("启动/重启(&S)", To16(SystemIcons.Application), OnStartClick);
+            var miStop  = new ToolStripMenuItem("停止(&T)",     To16(SystemIcons.Hand),        OnStopClick);
+            var miSet   = new ToolStripMenuItem("设置(&G)...",  To16(SystemIcons.Information), OnSettingsClick);
+            var miLog   = new ToolStripMenuItem("打开日志目录", To16(SystemIcons.Asterisk),    (s,e)=> Process.Start("explorer.exe", Path.GetTempPath()));
+            var miExit  = new ToolStripMenuItem("退出(&X)",     To16(SystemIcons.Error),       (s,e)=> { Stop(); Application.Exit(); });
 
             _menu.Items.AddRange(new ToolStripItem[]{ miStart, miStop, new ToolStripSeparator(), miSet, miLog, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
-            _debounce = new System.Windows.Forms.Timer();
-            _debounce.Interval = 400;
             _debounce.Tick += OnDebounceTick;
 
             EnsureAutoStart(_cfg.AutoStart);
             StartOrRestart();
+        }
+
+        static Bitmap To16(Icon ico)
+        {
+            try
+            {
+                using (var bmp = ico.ToBitmap())
+                {
+                    var img = new Bitmap(16, 16);
+                    using (var g = Graphics.FromImage(img)) g.DrawImage(bmp, new Rectangle(0, 0, 16, 16));
+                    return img;
+                }
+            } catch { return null; }
         }
 
         void OnStartClick(object sender, EventArgs e) => StartOrRestart();
@@ -235,7 +263,7 @@ namespace MirrorAudio
             } catch { }
         }
 
-        // —— IMMNotificationClient（事件驱动热插拔自愈） —— //
+        // —— 设备事件：事件驱动热插拔自愈 —— //
         public void OnDeviceStateChanged(string id, DeviceState st) { if (IsRelevant(id)) DebounceRestart(); }
         public void OnDeviceAdded(string id)  { if (IsRelevant(id)) DebounceRestart(); }
         public void OnDeviceRemoved(string id){ if (IsRelevant(id)) DebounceRestart(); }
@@ -254,16 +282,8 @@ namespace MirrorAudio
                 || string.Equals(id, _cfg.AuxDeviceId,   StringComparison.OrdinalIgnoreCase);
         }
 
-        void DebounceRestart()
-        {
-            _debounce.Stop();
-            _debounce.Start();
-        }
-        void OnDebounceTick(object sender, EventArgs e)
-        {
-            _debounce.Stop();
-            StartOrRestart();
-        }
+        void DebounceRestart() { _debounce.Stop(); _debounce.Start(); }
+        void OnDebounceTick(object sender, EventArgs e) { _debounce.Stop(); StartOrRestart(); }
 
         // —— 主流程 —— //
         void StartOrRestart()
@@ -271,7 +291,7 @@ namespace MirrorAudio
             Stop();
             if (_mm == null) _mm = new MMDeviceEnumerator();
 
-            // 输入优先取配置，否则默认渲染环回
+            // 输入：优先配置；否则默认渲染环回
             _inDev   = FindById(_cfg.InputDeviceId, DataFlow.Capture) ?? FindById(_cfg.InputDeviceId, DataFlow.Render);
             if (_inDev == null) _inDev = _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
             _outMain = FindById(_cfg.MainDeviceId, DataFlow.Render);
@@ -299,9 +319,9 @@ namespace MirrorAudio
             _inFmtStr = Fmt(inFmt);
             if (Logger.Enabled) Logger.Info("Input: " + _inDev.FriendlyName + " | " + _inFmtStr + " | " + _inRoleStr);
 
-            // 两路桥接缓冲（确保足够大避免频繁扩容）
-            _bufMain = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs * 8, 120)) };
-            _bufAux  = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs  * 6, 150)) };
+            // 两路桥接缓冲（容量充足但不过量，降低 GC 压力与内存）
+            _bufMain = new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs * 6, 120)) };
+            _bufAux  = new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs  * 4, 150)) };
 
             // 设备周期（带缓存）
             GetDevicePeriodsMsCached(_outMain, out _defMainMs, out _minMainMs);
@@ -324,7 +344,7 @@ namespace MirrorAudio
                 {
                     if (!FormatsEqual(inFmt, desiredMain))
                     {
-                        _resMain = new MediaFoundationResampler(_bufMain, desiredMain) { ResamplerQuality = 50 };
+                        _resMain = new MediaFoundationResampler(_bufMain, desiredMain){ ResamplerQuality = 50 };
                         _srcMain = _resMain;
                     }
                     int msEx = SafeBuf(_cfg.MainBufMs, true, _defMainMs, _minMainMs);
@@ -336,7 +356,7 @@ namespace MirrorAudio
                     var fmt32 = new WaveFormat(_cfg.MainRate, 32, 2);
                     if (IsFormatSupportedExclusive(_outMain, fmt32))
                     {
-                        _resMain = new MediaFoundationResampler(_bufMain, fmt32) { ResamplerQuality = 50 };
+                        _resMain = new MediaFoundationResampler(_bufMain, fmt32){ ResamplerQuality = 50 };
                         _srcMain = _resMain;
                         int msEx2 = SafeBuf(_cfg.MainBufMs, true, _defMainMs, _minMainMs);
                         _mainOut = CreateOutWithPolicy(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, msEx2, _srcMain, out _mainEventSyncUsed);
@@ -345,22 +365,21 @@ namespace MirrorAudio
                 }
                 if (_mainOut == null && _cfg.MainShare == ShareModeOption.Exclusive)
                 {
-                    MessageBox.Show("主通道“强制独占”失败：请检查占用或格式。可尝试 32-bit 容器。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("主通道“强制独占”失败：请检查占用或格式（可尝试 32-bit 容器）。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     CleanupCreated(); return;
                 }
             }
 
             if (_mainOut == null)
             {
-                _srcMain = _bufMain;
                 int msSh = SafeBuf(_cfg.MainBufMs, false, _defMainMs);
-                _mainOut = CreateOutWithPolicy(_outMain, AudioClientShareMode.Shared, _cfg.MainSync, msSh, _srcMain, out _mainEventSyncUsed);
+                _mainOut = CreateOutWithPolicy(_outMain, AudioClientShareMode.Shared, _cfg.MainSync, msSh, _bufMain, out _mainEventSyncUsed);
                 if (_mainOut == null) { MessageBox.Show("主通道初始化失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error); CleanupCreated(); return; }
                 _mainIsExclusive = false; _mainBufEffectiveMs = msSh;
                 try { _mainFmtStr = Fmt(_outMain.AudioClient.MixFormat); } catch { _mainFmtStr = "系统混音"; }
             }
 
-            // —— 副通道 —— //
+            // —— 副通道：同策略 —— //
             _srcAux = _bufAux; _resAux = null;
             _auxIsExclusive = false; _auxEventSyncUsed = false; _auxBufEffectiveMs = _cfg.AuxBufMs; _auxFmtStr = "-";
             var desiredAux = new WaveFormat(_cfg.AuxRate, _cfg.AuxBits, 2);
@@ -377,7 +396,7 @@ namespace MirrorAudio
                 {
                     if (!FormatsEqual(inFmt, desiredAux))
                     {
-                        _resAux = new MediaFoundationResampler(_bufAux, desiredAux) { ResamplerQuality = 40 };
+                        _resAux = new MediaFoundationResampler(_bufAux, desiredAux){ ResamplerQuality = 40 };
                         _srcAux = _resAux;
                     }
                     int msExA = SafeBuf(_cfg.AuxBufMs, true, _defAuxMs, _minAuxMs);
@@ -389,7 +408,7 @@ namespace MirrorAudio
                     var fmt32A = new WaveFormat(_cfg.AuxRate, 32, 2);
                     if (IsFormatSupportedExclusive(_outAux, fmt32A))
                     {
-                        _resAux = new MediaFoundationResampler(_bufAux, fmt32A) { ResamplerQuality = 40 };
+                        _resAux = new MediaFoundationResampler(_bufAux, fmt32A){ ResamplerQuality = 40 };
                         _srcAux = _resAux;
                         int msExA2 = SafeBuf(_cfg.AuxBufMs, true, _defAuxMs, _minAuxMs);
                         _auxOut = CreateOutWithPolicy(_outAux, AudioClientShareMode.Exclusive, _cfg.AuxSync, msExA2, _srcAux, out _auxEventSyncUsed);
@@ -398,22 +417,21 @@ namespace MirrorAudio
                 }
                 if (_auxOut == null && _cfg.AuxShare == ShareModeOption.Exclusive)
                 {
-                    MessageBox.Show("副通道“强制独占”失败：请检查占用或格式。可尝试 32-bit 容器。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("副通道“强制独占”失败：请检查占用或格式（可尝试 32-bit 容器）。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     CleanupCreated(); return;
                 }
             }
 
             if (_auxOut == null)
             {
-                _srcAux = _bufAux;
                 int msShA = SafeBuf(_cfg.AuxBufMs, false, _defAuxMs);
-                _auxOut = CreateOutWithPolicy(_outAux, AudioClientShareMode.Shared, _cfg.AuxSync, msShA, _srcAux, out _auxEventSyncUsed);
+                _auxOut = CreateOutWithPolicy(_outAux, AudioClientShareMode.Shared, _cfg.AuxSync, msShA, _bufAux, out _auxEventSyncUsed);
                 if (_auxOut == null) { MessageBox.Show("副通道初始化失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error); CleanupCreated(); return; }
                 _auxIsExclusive = false; _auxBufEffectiveMs = msShA;
                 try { _auxFmtStr = Fmt(_outAux.AudioClient.MixFormat); } catch { _auxFmtStr = "系统混音"; }
             }
 
-            // —— 绑定与启动（方法组，避免闭包分配） —— //
+            // 绑定与启动（方法组，避免闭包分配）
             _capture.DataAvailable += OnCaptureDataAvailable;
             _capture.RecordingStopped += OnRecordingStopped;
 
@@ -475,16 +493,13 @@ namespace MirrorAudio
             try { if (_resAux  != null) _resAux .Dispose(); } catch { } _resAux  = null;
             _bufMain = null; _bufAux = null;
         }
-        // 启动失败时的静默回收：不弹气泡、不改_running，仅清理已创建对象
-        void CleanupCreated()
-        {
-            DisposeAll();
-        }
 
-        // —— 即时状态供设置窗体按需读取 —— //
+        // ★ 启动失败时的静默回收（保持前文调用点一致）
+        void CleanupCreated() { DisposeAll(); }
+
         public StatusSnapshot GetStatusSnapshot()
         {
-            var s = new StatusSnapshot
+            return new StatusSnapshot
             {
                 Running = _running,
                 InputRole = _inRoleStr,
@@ -500,12 +515,9 @@ namespace MirrorAudio
                 AuxFormat  = _auxOut  != null ? _auxFmtStr  : "-",
                 MainBufferMs = _mainOut != null ? _mainBufEffectiveMs : 0,
                 AuxBufferMs  = _auxOut  != null ? _auxBufEffectiveMs  : 0,
-                MainDefaultPeriodMs = _defMainMs,
-                MainMinimumPeriodMs = _minMainMs,
-                AuxDefaultPeriodMs  = _defAuxMs,
-                AuxMinimumPeriodMs  = _minAuxMs
+                MainDefaultPeriodMs = _defMainMs, MainMinimumPeriodMs = _minMainMs,
+                AuxDefaultPeriodMs  = _defAuxMs,  AuxMinimumPeriodMs  = _minAuxMs
             };
-            return s;
         }
 
         string SafeNameForId(string id, DataFlow flow)
@@ -513,13 +525,13 @@ namespace MirrorAudio
             if (string.IsNullOrEmpty(id)) return "-";
             try
             {
-                foreach (var d in _mm.EnumerateAudioEndPoints(flow, DeviceState.Active))
-                    if (d.ID == id) return d.FriendlyName;
+                var col = _mm.EnumerateAudioEndPoints(flow, DeviceState.Active);
+                foreach (var d in col) if (d.ID == id) return d.FriendlyName;
             } catch { }
             return "-";
         }
 
-        // —— 工具函数（去掉热路径 LINQ） —— //
+        // —— 工具 —— //
         MMDevice FindById(string id, DataFlow flow)
         {
             if (string.IsNullOrEmpty(id)) return null;
@@ -537,17 +549,14 @@ namespace MirrorAudio
             return wf.SampleRate + "Hz/" + wf.BitsPerSample + "bit/" + wf.Channels + "ch";
         }
 
-        // 设备周期缓存：先查缓存，再反射获取一次
+        // 周期缓存：先查缓存，再反射一次
         void GetDevicePeriodsMsCached(MMDevice dev, out double defMs, out double minMs)
         {
             defMs = 10.0; minMs = 2.0;
             if (dev == null) return;
             var id = dev.ID;
             Tuple<double,double> t;
-            if (_periodCache.TryGetValue(id, out t))
-            {
-                defMs = t.Item1; minMs = t.Item2; return;
-            }
+            if (_periodCache.TryGetValue(id, out t)) { defMs = t.Item1; minMs = t.Item2; return; }
 
             try
             {
@@ -565,8 +574,7 @@ namespace MirrorAudio
                     {
                         object[] args = new object[] { 0L, 0L };
                         m.Invoke(ac, args);
-                        def100 = (long)args[0];
-                        min100 = (long)args[1];
+                        def100 = (long)args[0]; min100 = (long)args[1];
                     }
                 }
                 if (def100 > 0) defMs = def100 / 10000.0;
@@ -589,6 +597,7 @@ namespace MirrorAudio
             return a.SampleRate == b.SampleRate && a.BitsPerSample == b.BitsPerSample && a.Channels == b.Channels;
         }
 
+        // 缓冲对齐：独占对齐到最小周期的整数倍（不改变总体延迟目标）
         static int SafeBuf(int desiredMs, bool exclusive, double defaultPeriodMs, double minPeriodMs = 0)
         {
             int ms = desiredMs;
@@ -610,6 +619,7 @@ namespace MirrorAudio
             return ms;
         }
 
+        // 策略化创建输出（事件优先，失败回退轮询；或按用户强制）
         WasapiOut CreateOutWithPolicy(MMDevice dev, AudioClientShareMode mode, SyncModeOption syncPref, int bufMs, IWaveProvider src, out bool eventUsed)
         {
             eventUsed = false;
