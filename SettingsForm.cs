@@ -1,334 +1,318 @@
 using System;
 using System.Drawing;
-using System.Text;
+using System.Linq;
 using System.Windows.Forms;
 using NAudio.CoreAudioApi;
 
 namespace MirrorAudio
 {
-    sealed class SettingsForm : Form
+    internal sealed class SettingsForm : Form
     {
-        // 控件
-        readonly ComboBox cmbInput = new ComboBox();
-        readonly ComboBox cmbMain  = new ComboBox();
-        readonly ComboBox cmbAux   = new ComboBox();
-
-        readonly ComboBox cmbShareMain = new ComboBox();
-        readonly ComboBox cmbSyncMain  = new ComboBox();
-        readonly NumericUpDown numRateMain = new NumericUpDown();
-        readonly NumericUpDown numBitsMain = new NumericUpDown();
-        readonly NumericUpDown numBufMain  = new NumericUpDown();
-
-        readonly ComboBox cmbShareAux  = new ComboBox();
-        readonly ComboBox cmbSyncAux   = new ComboBox();
-        readonly NumericUpDown numRateAux  = new NumericUpDown();
-        readonly NumericUpDown numBitsAux  = new NumericUpDown();
-        readonly NumericUpDown numBufAux   = new NumericUpDown();
-
-        readonly CheckBox chkAutoStart = new CheckBox();
-        readonly CheckBox chkLogging   = new CheckBox();
-
-        readonly Button btnOk = new Button();
-        readonly Button btnCancel = new Button();
-        readonly Button btnRefresh = new Button();
-        readonly Button btnCopy    = new Button();
-
-        readonly Label lblRun = new Label();
-        readonly Label lblInput = new Label();
-        readonly Label lblMain  = new Label();
-        readonly Label lblAux   = new Label();
-        readonly Label lblMainFmt = new Label();
-        readonly Label lblAuxFmt  = new Label();
-        readonly Label lblMainBuf = new Label();
-        readonly Label lblAuxBuf  = new Label();
-        readonly Label lblMainPer = new Label();
-        readonly Label lblAuxPer  = new Label();
-
-        readonly Func<StatusSnapshot> _statusProvider;
-
-        sealed class DevItem { public string Id; public string Name; public override string ToString() => Name; }
-
+        private readonly Func<StatusSnapshot> _getStatus;
         public AppSettings Result { get; private set; }
 
-        public SettingsForm(AppSettings cur, Func<StatusSnapshot> statusProvider)
+        private ComboBox cbInput, cbMain, cbAux;
+        private ComboBox cbMainShare, cbMainSync, cbAuxShare, cbAuxSync, cbMainBits, cbAuxBits, cbMainRate, cbAuxRate;
+        private NumericUpDown nudMainBuf, nudAuxBuf;
+        private CheckBox chkAutoStart, chkLog;
+
+        private Label lbInput, lbMain, lbAux, lbMainMode, lbAuxMode, lbMainFmt, lbAuxFmt, lbMainBuf, lbAuxBuf, lbMainPer, lbAuxPer;
+
+        public SettingsForm(AppSettings current, Func<StatusSnapshot> getStatus)
         {
-            _statusProvider = statusProvider ?? (() => new StatusSnapshot());
+            Result = Clone(current);
+            _getStatus = getStatus;
 
             Text = "MirrorAudio 设置";
-            BackColor = Color.White;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false; MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
+            MinimumSize = new Size(680, 520);
+            Font = SystemFonts.MessageBoxFont;
             AutoScaleMode = AutoScaleMode.Dpi;
-            Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Regular);
-            ClientSize = new Size(820, 680);
-            DoubleBuffered = true;
 
-            var header = new Label
+            BuildUi();
+            LoadValues(current);
+            RefreshStatus();
+
+            var timer = new Timer { Interval = 800 };
+            timer.Tick += (s, e) => { if (!IsDisposed) RefreshStatus(); };
+            timer.Start();
+            FormClosed += (s, e) => timer.Stop();
+        }
+
+        private static AppSettings Clone(AppSettings s) =>
+            new AppSettings
             {
-                Text = "MirrorAudio",
-                AutoSize = true,
-                Font = new Font(Font.FontFamily, 16, FontStyle.Bold),
-                Padding = new Padding(12, 10, 12, 8),
-                ForeColor = Color.FromArgb(40, 40, 40)
+                InputDeviceId = s.InputDeviceId,
+                MainDeviceId = s.MainDeviceId,
+                AuxDeviceId = s.AuxDeviceId,
+                MainShare = s.MainShare,
+                MainSync = s.MainSync,
+                MainRate = s.MainRate,
+                MainBits = s.MainBits,
+                MainBufMs = s.MainBufMs,
+                AuxShare = s.AuxShare,
+                AuxSync = s.AuxSync,
+                AuxRate = s.AuxRate,
+                AuxBits = s.AuxBits,
+                AuxBufMs = s.AuxBufMs,
+                AutoStart = s.AutoStart,
+                EnableLogging = s.EnableLogging
             };
 
-            var grpStatus = new GroupBox { Text = "当前状态（打开查看，关闭即释放内存）", Dock = DockStyle.Top, Padding = new Padding(12), AutoSize = true };
-            var tblS = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4, 4, 4, 0) };
-            tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
-            tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 76));
+        private sealed class DevItem
+        {
+            public string Id { get; }
+            public string Name { get; }
+            public DevItem(string id, string name) { Id = id; Name = name; }
+            public override string ToString() => Name;
+        }
 
-            AddRow(tblS, "运行状态", lblRun);
-            AddRow(tblS, "输入",    lblInput);
-            AddRow(tblS, "主通道",  lblMain);
-            AddRow(tblS, "主格式",  lblMainFmt);
-            AddRow(tblS, "主缓冲",  lblMainBuf);
-            AddRow(tblS, "主周期",  lblMainPer);
-            AddRow(tblS, "副通道",  lblAux);
-            AddRow(tblS, "副格式",  lblAuxFmt);
-            AddRow(tblS, "副缓冲",  lblAuxBuf);
-            AddRow(tblS, "副周期",  lblAuxPer);
-
-            var pnlSBtns = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 6, 0, 2) };
-            btnRefresh.Text = "刷新状态";
-            btnCopy.Text    = "复制状态";
-            btnRefresh.Click += (s, e) => RenderStatus();
-            btnCopy.Click    += (s, e) => { Clipboard.SetText(BuildStatusText()); MessageBox.Show("状态已复制到剪贴板。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information); };
-            pnlSBtns.Controls.Add(btnRefresh);
-            pnlSBtns.Controls.Add(btnCopy);
-            grpStatus.Controls.Add(tblS);
-            grpStatus.Controls.Add(pnlSBtns);
-
-            var subtitle = new Label
+        private void BuildUi()
+        {
+            var root = new TableLayoutPanel
             {
-                Text = "选择三通道设备；主/副可配置 独占/共享 与 事件/轮询（独占下可指定采样率/位深）。",
-                AutoSize = true, ForeColor = Color.FromArgb(90, 90, 90), Padding = new Padding(12, 6, 12, 8)
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                Padding = new Padding(12),
+                AutoSize = true
             };
-
-            var grid = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 0, 12, 0) };
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
-
-            foreach (var cb in new[] { cmbInput, cmbMain, cmbAux, cmbShareMain, cmbSyncMain, cmbShareAux, cmbSyncAux })
-                cb.DropDownStyle = ComboBoxStyle.DropDownList;
-
-            AddRow(grid, "通道1 输入（录音/环回）", cmbInput);
-            AddRow(grid, "通道2 主通道（低延迟）", cmbMain);
-            AddRow(grid, "通道3 副通道（推流）", cmbAux);
-
-            cmbShareMain.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
-            cmbSyncMain.Items.AddRange(new object[] { "自动（事件优先）", "强制事件", "强制轮询" });
-            AddRow(grid, "主通道模式", cmbShareMain);
-            AddRow(grid, "主通道同步方式", cmbSyncMain);
-
-            numRateMain.Maximum = 384000; numRateMain.Minimum = 44100; numRateMain.Increment = 1000;
-            numBitsMain.Maximum = 32; numBitsMain.Minimum = 16; numBitsMain.Increment = 8;
-            numBufMain.Maximum = 200; numBufMain.Minimum = 4;
-            AddRow(grid, "主通道采样率 (Hz，独占)", numRateMain);
-            AddRow(grid, "主通道路位深 (bit，独占)", numBitsMain);
-            AddRow(grid, "主通道缓冲 (ms)", numBufMain);
-
-            cmbShareAux.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
-            cmbSyncAux.Items.AddRange(new object[] { "自动（事件优先）", "强制事件", "强制轮询" });
-            AddRow(grid, "副通道模式", cmbShareAux);
-            AddRow(grid, "副通道同步方式", cmbSyncAux);
-
-            numRateAux.Maximum = 384000; numRateAux.Minimum = 44100; numRateAux.Increment = 1000;
-            numBitsAux.Maximum = 32; numBitsAux.Minimum = 16; numBitsAux.Increment = 8;
-            numBufAux.Maximum = 400; numBufAux.Minimum = 50;
-            AddRow(grid, "副通道采样率 (Hz，独占)", numRateAux);
-            AddRow(grid, "副通道路位深 (bit，独占)", numBitsAux);
-            AddRow(grid, "副通道缓冲 (ms)", numBufAux);
-
-            var tips = new Label
-            {
-                Text = "提示：共享模式由系统混音决定格式，采样率/位深设置仅在独占模式下生效。24-bit 独占失败时，可尝试 32-bit（24-in-32 容器）。",
-                AutoSize = true, ForeColor = Color.FromArgb(90, 90, 90), Padding = new Padding(12, 6, 12, 6)
-            };
-
-            var opts = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(18, 6, 12, 6) };
-            chkAutoStart.Text = "Windows 自启动";
-            chkLogging.Text = "启用日志（排障用）";
-            opts.Controls.Add(chkAutoStart);
-            opts.Controls.Add(chkLogging);
-
-            var memNote = new Label
-            {
-                Text = "说明：设置窗口关闭即释放；常驻仅托盘与音频线程，额外占用极低。",
-                AutoSize = true, ForeColor = Color.FromArgb(120, 120, 120), Padding = new Padding(12, 4, 12, 6)
-            };
-
-            var pnlButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, Padding = new Padding(12), AutoSize = true };
-            btnOk.Text = "保存"; btnCancel.Text = "取消";
-            AcceptButton = btnOk; CancelButton = btnCancel;
-            btnOk.DialogResult = DialogResult.OK; btnCancel.DialogResult = DialogResult.Cancel;
-            btnOk.Click += (s, e) => SaveAndClose();
-            pnlButtons.Controls.AddRange(new Control[] { btnOk, btnCancel });
-
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-            root.Controls.Add(header, 0, 0);
-            root.Controls.Add(grpStatus, 0, 1);
-            root.Controls.Add(subtitle, 0, 2);
-            root.Controls.Add(grid, 0, 3);
-            root.Controls.Add(tips, 0, 4);
-            root.Controls.Add(opts, 0, 5);
-            root.Controls.Add(memNote, 0, 6);
-            root.Controls.Add(pnlButtons, 0, 7);
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
             Controls.Add(root);
 
-            LoadDevices();
-
-            // 载入现有配置
-            Result = new AppSettings
+            // 左：配置区
+            var left = new TableLayoutPanel
             {
-                InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
-                MainShare = cur.MainShare, MainSync = cur.MainSync,
-                MainRate = cur.MainRate, MainBits = cur.MainBits, MainBufMs = cur.MainBufMs,
-                AuxShare = cur.AuxShare, AuxSync = cur.AuxSync,
-                AuxRate = cur.AuxRate, AuxBits = cur.AuxBits, AuxBufMs = cur.AuxBufMs,
-                AutoStart = cur.AutoStart, EnableLogging = cur.EnableLogging
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                AutoSize = true
             };
+            left.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+            left.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            root.Controls.Add(left, 0, 0);
 
-            SelectById(cmbInput, cur.InputDeviceId);
-            SelectById(cmbMain, cur.MainDeviceId);
-            SelectById(cmbAux, cur.AuxDeviceId);
+            // 右：状态区
+            var right = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                AutoSize = true
+            };
+            root.Controls.Add(right, 1, 0);
 
-            numRateMain.Value = Clamp(cur.MainRate, (int)numRateMain.Minimum, (int)numRateMain.Maximum);
-            numBitsMain.Value = Clamp(cur.MainBits, (int)numBitsMain.Minimum, (int)numBitsMain.Maximum);
-            numBufMain.Value = Clamp(cur.MainBufMs, (int)numBufMain.Minimum, (int)numBufMain.Maximum);
+            // —— 设备选择 —— //
+            left.Controls.Add(new Label { Text = "输入源：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 0);
+            cbInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+            left.Controls.Add(cbInput, 1, 0);
 
-            cmbShareMain.SelectedIndex = cur.MainShare == ShareModeOption.Auto ? 0 : (cur.MainShare == ShareModeOption.Exclusive ? 1 : 2);
-            cmbSyncMain.SelectedIndex  = cur.MainSync  == SyncModeOption.Auto  ? 0 : (cur.MainSync  == SyncModeOption.Event     ? 1 : 2);
+            left.Controls.Add(new Label { Text = "主输出设备：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 1);
+            cbMain = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+            left.Controls.Add(cbMain, 1, 1);
 
-            numRateAux.Value = Clamp(cur.AuxRate, (int)numRateAux.Minimum, (int)numRateAux.Maximum);
-            numBitsAux.Value = Clamp(cur.AuxBits, (int)numBitsAux.Minimum, (int)numBitsAux.Maximum);
-            numBufAux.Value = Clamp(cur.AuxBufMs, (int)numBufAux.Minimum, (int)numBufAux.Maximum);
+            left.Controls.Add(new Label { Text = "副输出设备：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 2);
+            cbAux = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+            left.Controls.Add(cbAux, 1, 2);
 
-            cmbShareAux.SelectedIndex = cur.AuxShare == ShareModeOption.Auto ? 0 : (cur.AuxShare == ShareModeOption.Exclusive ? 1 : 2);
-            cmbSyncAux.SelectedIndex  = cur.AuxSync  == SyncModeOption.Auto  ? 0 : (cur.AuxSync  == SyncModeOption.Event     ? 1 : 2);
+            left.Controls.Add(new Label { Text = "—— 主通道 ——", AutoSize = true, ForeColor = SystemColors.GrayText }, 0, 3);
+            left.SetColumnSpan(left.Controls[left.Controls.Count - 1], 2);
 
-            chkAutoStart.Checked = cur.AutoStart;
-            chkLogging.Checked   = cur.EnableLogging;
+            left.Controls.Add(new Label { Text = "共享/独占：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 4);
+            cbMainShare = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            cbMainShare.Items.AddRange(new object[] { ShareModeOption.Auto, ShareModeOption.Exclusive, ShareModeOption.Shared });
+            left.Controls.Add(cbMainShare, 1, 4);
 
-            RenderStatus();
+            left.Controls.Add(new Label { Text = "同步模式：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 5);
+            cbMainSync = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            cbMainSync.Items.AddRange(new object[] { SyncModeOption.Auto, SyncModeOption.Event, SyncModeOption.Polling });
+            left.Controls.Add(cbMainSync, 1, 5);
+
+            left.Controls.Add(new Label { Text = "采样率(独占)：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 6);
+            cbMainRate = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            cbMainRate.Items.AddRange(new object[] { 44100, 48000, 88200, 96000, 176400, 192000 });
+            left.Controls.Add(cbMainRate, 1, 6);
+
+            left.Controls.Add(new Label { Text = "位深(独占)：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 7);
+            cbMainBits = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            cbMainBits.Items.AddRange(new object[] { 16, 24, 32 });
+            left.Controls.Add(cbMainBits, 1, 7);
+
+            left.Controls.Add(new Label { Text = "缓冲(ms)：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 8);
+            nudMainBuf = new NumericUpDown { Minimum = 2, Maximum = 1000, Increment = 1, Anchor = AnchorStyles.Left, Width = 100 };
+            left.Controls.Add(nudMainBuf, 1, 8);
+
+            left.Controls.Add(new Label { Text = "—— 副通道 ——", AutoSize = true, ForeColor = SystemColors.GrayText }, 0, 9);
+            left.SetColumnSpan(left.Controls[left.Controls.Count - 1], 2);
+
+            left.Controls.Add(new Label { Text = "共享/独占：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 10);
+            cbAuxShare = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            cbAuxShare.Items.AddRange(new object[] { ShareModeOption.Shared, ShareModeOption.Auto, ShareModeOption.Exclusive });
+            left.Controls.Add(cbAuxShare, 1, 10);
+
+            left.Controls.Add(new Label { Text = "同步模式：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 11);
+            cbAuxSync = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            cbAuxSync.Items.AddRange(new object[] { SyncModeOption.Auto, SyncModeOption.Event, SyncModeOption.Polling });
+            left.Controls.Add(cbAuxSync, 1, 11);
+
+            left.Controls.Add(new Label { Text = "采样率(独占)：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 12);
+            cbAuxRate = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            cbAuxRate.Items.AddRange(new object[] { 44100, 48000, 88200, 96000, 176400, 192000 });
+            left.Controls.Add(cbAuxRate, 1, 12);
+
+            left.Controls.Add(new Label { Text = "位深(独占)：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 13);
+            cbAuxBits = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            cbAuxBits.Items.AddRange(new object[] { 16, 24, 32 });
+            left.Controls.Add(cbAuxBits, 1, 13);
+
+            left.Controls.Add(new Label { Text = "缓冲(ms)：", Anchor = AnchorStyles.Left, AutoSize = true }, 0, 14);
+            nudAuxBuf = new NumericUpDown { Minimum = 10, Maximum = 2000, Increment = 5, Anchor = AnchorStyles.Left, Width = 100 };
+            left.Controls.Add(nudAuxBuf, 1, 14);
+
+            // 其他
+            chkAutoStart = new CheckBox { Text = "开机自启动", AutoSize = true, Anchor = AnchorStyles.Left };
+            chkLog = new CheckBox { Text = "启用日志（便于排障）", AutoSize = true, Anchor = AnchorStyles.Left };
+            left.Controls.Add(chkAutoStart, 0, 15);
+            left.Controls.Add(chkLog, 1, 15);
+
+            // 按钮
+            var pnlBtn = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, Height = 40 };
+            var btnOK = new Button { Text = "确定", DialogResult = DialogResult.OK };
+            var btnCancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel };
+            pnlBtn.Controls.Add(btnOK);
+            pnlBtn.Controls.Add(btnCancel);
+            Controls.Add(pnlBtn);
+
+            btnOK.Click += (s, e) => { SaveValues(); };
+            btnCancel.Click += (s, e) => { /* no-op */ };
+
+            // —— 右侧状态区 —— //
+            var gbStatus = new GroupBox { Text = "当前运行状态", Dock = DockStyle.Fill };
+            right.Controls.Add(gbStatus);
+
+            var st = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Padding = new Padding(8) };
+            st.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+            st.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            gbStatus.Controls.Add(st);
+
+            lbInput = AddRow(st, "输入：");
+            lbMain  = AddRow(st, "主输出：");
+            lbAux   = AddRow(st, "副输出：");
+            lbMainMode = AddRow(st, "主通道模式：");
+            lbAuxMode  = AddRow(st, "副通道模式：");
+            lbMainFmt  = AddRow(st, "主通道格式：");
+            lbAuxFmt   = AddRow(st, "副通道格式：");
+            lbMainBuf  = AddRow(st, "主缓冲(ms)：");
+            lbAuxBuf   = AddRow(st, "副缓冲(ms)：");
+            lbMainPer  = AddRow(st, "主设备周期(ms)：");
+            lbAuxPer   = AddRow(st, "副设备周期(ms)：");
         }
 
-        void RenderStatus()
+        private static Label AddRow(TableLayoutPanel tl, string name)
+        {
+            tl.Controls.Add(new Label { Text = name, AutoSize = true, Anchor = AnchorStyles.Left });
+            var v = new Label { Text = "-", AutoSize = true, Anchor = AnchorStyles.Left };
+            tl.Controls.Add(v);
+            return v;
+        }
+
+        private void LoadValues(AppSettings c)
+        {
+            // 设备列表
+            cbInput.Items.Clear();
+            cbMain.Items.Clear();
+            cbAux.Items.Clear();
+
+            using (var mm = new MMDeviceEnumerator())
+            {
+                // 输入（既包含录音也包含渲染，便于“环回”选择）
+                foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active))
+                    cbInput.Items.Add(new DevItem(d.ID, "[录音] " + d.FriendlyName));
+                foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+                    cbInput.Items.Add(new DevItem(d.ID, "[环回] " + d.FriendlyName));
+
+                foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+                {
+                    cbMain.Items.Add(new DevItem(d.ID, d.FriendlyName));
+                    cbAux.Items.Add(new DevItem(d.ID, d.FriendlyName));
+                }
+            }
+
+            SelectById(cbInput, c.InputDeviceId);
+            SelectById(cbMain,  c.MainDeviceId);
+            SelectById(cbAux,   c.AuxDeviceId);
+
+            cbMainShare.SelectedItem = c.MainShare;
+            cbMainSync.SelectedItem  = c.MainSync;
+            cbMainRate.SelectedItem  = (object)c.MainRate ?? 192000;
+            cbMainBits.SelectedItem  = (object)c.MainBits ?? 24;
+            nudMainBuf.Value         = Math.Max(2, Math.Min(1000, c.MainBufMs));
+
+            cbAuxShare.SelectedItem  = c.AuxShare;
+            cbAuxSync.SelectedItem   = c.AuxSync;
+            cbAuxRate.SelectedItem   = (object)c.AuxRate ?? 48000;
+            cbAuxBits.SelectedItem   = (object)c.AuxBits ?? 16;
+            nudAuxBuf.Value          = Math.Max(10, Math.Min(2000, c.AuxBufMs));
+
+            chkAutoStart.Checked = c.AutoStart;
+            chkLog.Checked = c.EnableLogging;
+        }
+
+        private static void SelectById(ComboBox cb, string id)
+        {
+            if (string.IsNullOrEmpty(id) || cb.Items.Count == 0) { if (cb.Items.Count > 0) cb.SelectedIndex = 0; return; }
+            for (int i = 0; i < cb.Items.Count; i++)
+            {
+                var it = cb.Items[i] as DevItem;
+                if (it != null && string.Equals(it.Id, id, StringComparison.OrdinalIgnoreCase))
+                { cb.SelectedIndex = i; return; }
+            }
+            cb.SelectedIndex = 0;
+        }
+
+        private void SaveValues()
+        {
+            Result.InputDeviceId = (cbInput.SelectedItem as DevItem)?.Id;
+            Result.MainDeviceId  = (cbMain .SelectedItem as DevItem)?.Id;
+            Result.AuxDeviceId   = (cbAux  .SelectedItem as DevItem)?.Id;
+
+            Result.MainShare = (ShareModeOption)cbMainShare.SelectedItem;
+            Result.MainSync  = (SyncModeOption)cbMainSync.SelectedItem;
+            Result.MainRate  = (int)cbMainRate.SelectedItem;
+            Result.MainBits  = (int)cbMainBits.SelectedItem;
+            Result.MainBufMs = (int)nudMainBuf.Value;
+
+            Result.AuxShare  = (ShareModeOption)cbAuxShare.SelectedItem;
+            Result.AuxSync   = (SyncModeOption)cbAuxSync.SelectedItem;
+            Result.AuxRate   = (int)cbAuxRate.SelectedItem;
+            Result.AuxBits   = (int)cbAuxBits.SelectedItem;
+            Result.AuxBufMs  = (int)nudAuxBuf.Value;
+
+            Result.AutoStart = chkAutoStart.Checked;
+            Result.EnableLogging = chkLog.Checked;
+        }
+
+        private void RefreshStatus()
         {
             StatusSnapshot s;
-            try { s = _statusProvider(); } catch { s = new StatusSnapshot(); }
+            try { s = _getStatus?.Invoke(); }
+            catch { s = null; }
+            if (s == null) return;
 
-            lblRun.Text = s.Running ? "运行中" : "停止";
-            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | " + (s.InputFormat ?? "-");
-            lblMain.Text = (s.MainDevice ?? "-") + " | " + (s.MainMode ?? "-") + " | " + (s.MainSync ?? "-");
-            lblAux.Text = (s.AuxDevice ?? "-") + " | " + (s.AuxMode ?? "-") + " | " + (s.AuxSync ?? "-");
-            lblMainFmt.Text = s.MainFormat ?? "-";
-            lblAuxFmt.Text = s.AuxFormat ?? "-";
-            lblMainBuf.Text = s.MainBufferMs > 0 ? (s.MainBufferMs + " ms") : "-";
-            lblAuxBuf.Text = s.AuxBufferMs > 0 ? (s.AuxBufferMs + " ms") : "-";
-            lblMainPer.Text = "—"; // 若需要周期显示，可在 StatusSnapshot 中扩展
-            lblAuxPer.Text = "—";
-        }
+            lbInput.Text   = $"{s.InputRole} | {s.InputFormat} | {s.InputDevice}";
+            lbMain.Text    = s.MainDevice;
+            lbAux.Text     = s.AuxDevice;
 
-        string BuildStatusText()
-        {
-            StatusSnapshot s;
-            try { s = _statusProvider(); } catch { s = new StatusSnapshot(); }
+            lbMainMode.Text = $"{s.MainMode}/{s.MainSync}";
+            lbAuxMode.Text  = $"{s.AuxMode}/{s.AuxSync}";
 
-            var sb = new StringBuilder(256);
-            sb.AppendLine("MirrorAudio 状态快照");
-            sb.AppendLine("运行状态: " + (s.Running ? "运行中" : "停止"));
-            sb.AppendLine("输入: " + (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | " + (s.InputFormat ?? "-"));
-            sb.AppendLine("主通道: " + (s.MainDevice ?? "-") + " | " + (s.MainMode ?? "-") + " | " + (s.MainSync ?? "-"));
-            sb.AppendLine("主格式: " + (s.MainFormat ?? "-"));
-            sb.AppendLine("主缓冲: " + (s.MainBufferMs > 0 ? (s.MainBufferMs + " ms") : "-"));
-            sb.AppendLine("副通道: " + (s.AuxDevice ?? "-") + " | " + (s.AuxMode ?? "-") + " | " + (s.AuxSync ?? "-"));
-            sb.AppendLine("副格式: " + (s.AuxFormat ?? "-"));
-            sb.AppendLine("副缓冲: " + (s.AuxBufferMs > 0 ? (s.AuxBufferMs + " ms") : "-"));
-            return sb.ToString();
-        }
+            lbMainFmt.Text  = s.MainFormat;
+            lbAuxFmt.Text   = s.AuxFormat;
 
-        static void AddRow(TableLayoutPanel grid, string label, Control c)
-        {
-            var l = new Label { Text = label, AutoSize = true, TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 6) };
-            c.Dock = DockStyle.Fill;
-            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            grid.Controls.Add(l, 0, grid.RowCount);
-            grid.Controls.Add(c, 1, grid.RowCount);
-            grid.RowCount++;
-        }
+            lbMainBuf.Text  = s.MainBufferMs.ToString();
+            lbAuxBuf.Text   = s.AuxBufferMs.ToString();
 
-        static int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
-
-        void LoadDevices()
-        {
-            var mm = new MMDeviceEnumerator();
-            cmbInput.Items.Clear();
-            foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active))
-                cmbInput.Items.Add(new DevItem { Id = d.ID, Name = "录音: " + d.FriendlyName });
-            foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
-                cmbInput.Items.Add(new DevItem { Id = d.ID, Name = "环回: " + d.FriendlyName });
-
-            cmbMain.Items.Clear(); cmbAux.Items.Clear();
-            foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
-            {
-                var it = new DevItem { Id = d.ID, Name = d.FriendlyName };
-                cmbMain.Items.Add(it);
-                cmbAux.Items.Add(new DevItem { Id = d.ID, Name = d.FriendlyName });
-            }
-        }
-
-        void SelectById(ComboBox cmb, string id)
-        {
-            if (string.IsNullOrEmpty(id) || cmb.Items.Count == 0) { if (cmb.Items.Count > 0) cmb.SelectedIndex = 0; return; }
-            for (int i = 0; i < cmb.Items.Count; i++)
-            {
-                var it = cmb.Items[i] as DevItem;
-                if (it != null && it.Id == id) { cmb.SelectedIndex = i; return; }
-            }
-            cmb.SelectedIndex = 0;
-        }
-
-        void SaveAndClose()
-        {
-            var inSel = cmbInput.SelectedItem as DevItem;
-            var mainSel = cmbMain.SelectedItem as DevItem;
-            var auxSel = cmbAux.SelectedItem as DevItem;
-            if (mainSel == null || auxSel == null)
-            {
-                MessageBox.Show("请至少选择主/副输出设备。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                DialogResult = DialogResult.None; return;
-            }
-
-            ShareModeOption shareMain = cmbShareMain.SelectedIndex == 1 ? ShareModeOption.Exclusive : (cmbShareMain.SelectedIndex == 2 ? ShareModeOption.Shared : ShareModeOption.Auto);
-            SyncModeOption  syncMain  = cmbSyncMain.SelectedIndex  == 1 ? SyncModeOption.Event     : (cmbSyncMain.SelectedIndex  == 2 ? SyncModeOption.Polling : SyncModeOption.Auto);
-
-            ShareModeOption shareAux = cmbShareAux.SelectedIndex == 1 ? ShareModeOption.Exclusive : (cmbShareAux.SelectedIndex == 2 ? ShareModeOption.Shared : ShareModeOption.Auto);
-            SyncModeOption  syncAux  = cmbSyncAux.SelectedIndex  == 1 ? SyncModeOption.Event     : (cmbSyncAux.SelectedIndex  == 2 ? SyncModeOption.Polling : SyncModeOption.Auto);
-
-            Result = new AppSettings
-            {
-                InputDeviceId = inSel != null ? inSel.Id : null,
-                MainDeviceId = mainSel.Id,
-                AuxDeviceId  = auxSel.Id,
-
-                MainShare = shareMain,
-                MainSync  = syncMain,
-                MainRate  = (int)numRateMain.Value,
-                MainBits  = (int)numBitsMain.Value,
-                MainBufMs = (int)numBufMain.Value,
-
-                AuxShare  = shareAux,
-                AuxSync   = syncAux,
-                AuxRate   = (int)numRateAux.Value,
-                AuxBits   = (int)numBitsAux.Value,
-                AuxBufMs  = (int)numBufAux.Value,
-
-                AutoStart = chkAutoStart.Checked,
-                EnableLogging = chkLogging.Checked
-            };
-            DialogResult = DialogResult.OK;
-            Close(); // 关闭即释放窗口内存
+            lbMainPer.Text  = $"{s.MainDefaultPeriodMs:0.###} / {s.MainMinimumPeriodMs:0.###}";
+            lbAuxPer.Text   = $"{s.AuxDefaultPeriodMs:0.###} / {s.AuxMinimumPeriodMs:0.###}";
         }
     }
 }
