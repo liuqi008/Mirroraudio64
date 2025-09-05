@@ -8,7 +8,6 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using NAudio.CoreAudioApi;
-using NAudio.CoreAudioApi.Interfaces;
 using NAudio.Wave;
 
 namespace MirrorAudio
@@ -141,7 +140,7 @@ namespace MirrorAudio
         readonly ContextMenuStrip _menu = new ContextMenuStrip();
         AppSettings _cfg = Config.Load();
         MMDeviceEnumerator _mm;             
-        readonly Timer _debounce;             
+        readonly System.Windows.Forms.Timer _debounce;             
         bool _running;
         MMDevice _inDev, _outMain, _outAux;
         IWaveIn _capture;
@@ -181,13 +180,26 @@ namespace MirrorAudio
             _menu.Items.AddRange(new ToolStripItem[]{ miStart, miStop, new ToolStripSeparator(), miSet, miLog, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
-            _debounce = new Timer();
+            _debounce = new System.Windows.Forms.Timer();
             _debounce.Interval = 400;
             _debounce.Tick += OnDebounceTick;
 
             EnsureAutoStart(_cfg.AutoStart);
             StartOrRestart();
         }
+
+        public void Dispose()
+        {
+            // 释放资源
+            DisposeAll();
+        }
+
+        // 实现 IMMNotificationClient 接口的方法
+        public void OnDeviceStateChanged(string deviceId, DeviceState newState) { /* 处理设备状态变化 */ }
+        public void OnDeviceAdded(string deviceId) { /* 处理设备添加 */ }
+        public void OnDeviceRemoved(string deviceId) { /* 处理设备移除 */ }
+        public void OnDefaultDeviceChanged(DataFlow flow, Role role, string deviceId) { /* 处理默认设备变化 */ }
+        public void OnPropertyValueChanged(string deviceId, PropertyKey propertyKey) { /* 处理属性变化 */ }
 
         void OnStartClick(object sender, EventArgs e) => StartOrRestart();
         void OnStopClick(object sender, EventArgs e)  => Stop();
@@ -270,58 +282,6 @@ namespace MirrorAudio
                 AuxMinimumPeriodMs  = _minAuxMs
             };
             return s;
-        }
-
-        // 设备周期缓存：先查缓存，再反射获取一次
-        void GetDevicePeriodsMsCached(MMDevice dev, out double defMs, out double minMs)
-        {
-            defMs = 10.0; minMs = 2.0;
-            if (dev == null) return;
-            var id = dev.ID;
-            Tuple<double,double> t;
-            if (_periodCache.TryGetValue(id, out t))
-            {
-                defMs = t.Item1; minMs = t.Item2; return;
-            }
-
-            try
-            {
-                long def100 = 0, min100 = 0;
-                var ac = dev.AudioClient;
-                var pDef = ac.GetType().GetProperty("DefaultDevicePeriod");
-                var pMin = ac.GetType().GetProperty("MinimumDevicePeriod");
-                if (pDef != null) { var v = pDef.GetValue(ac, null); if (v != null) def100 = Convert.ToInt64(v); }
-                if (pMin != null) { var v = pMin.GetValue(ac, null); if (v != null) min100 = Convert.ToInt64(v); }
-
-                if (def100 == 0 || min100 == 0)
-                {
-                    var m = ac.GetType().GetMethod("GetDevicePeriod");
-                    if (m != null)
-                    {
-                        object[] args = new object[] { 0L, 0L };
-                        m.Invoke(ac, args);
-                        def100 = (long)args[0];
-                        min100 = (long)args[1];
-                    }
-                }
-                if (def100 > 0) defMs = def100 / 10000.0;
-                if (min100 > 0) minMs = min100 / 10000.0;
-            }
-            catch { }
-
-            _periodCache[id] = Tuple.Create(defMs, minMs);
-        }
-
-        static bool IsFormatSupportedExclusive(MMDevice dev, WaveFormat fmt)
-        {
-            try { return dev.AudioClient.IsFormatSupported(AudioClientShareMode.Exclusive, fmt); }
-            catch { return false; }
-        }
-
-        static bool FormatsEqual(WaveFormat a, WaveFormat b)
-        {
-            if (a == null || b == null) return false;
-            return a.SampleRate == b.SampleRate && a.BitsPerSample == b.BitsPerSample && a.Channels == b.Channels;
         }
     }
 }
