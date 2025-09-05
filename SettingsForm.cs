@@ -8,6 +8,19 @@ namespace MirrorAudio
 {
     sealed class SettingsForm : Form
     {
+        // 左：状态
+        readonly Label lblRun = new Label();
+        readonly Label lblInput = new Label();
+        readonly Label lblMain  = new Label();
+        readonly Label lblAux   = new Label();
+        readonly Label lblMainFmt = new Label();
+        readonly Label lblAuxFmt  = new Label();
+        readonly Label lblMainBuf = new Label();
+        readonly Label lblAuxBuf  = new Label();
+        readonly Label lblMainPer = new Label();
+        readonly Label lblAuxPer  = new Label();
+
+        // 右：设置
         readonly ComboBox cmbInput = new ComboBox();
         readonly ComboBox cmbMain  = new ComboBox();
         readonly ComboBox cmbAux   = new ComboBox();
@@ -32,17 +45,9 @@ namespace MirrorAudio
         readonly Button btnOk = new Button();
         readonly Button btnCancel = new Button();
 
-        // 状态区域控件
-        readonly Label lblRun = new Label();
-        readonly Label lblInput = new Label();
-        readonly Label lblMain  = new Label();
-        readonly Label lblAux   = new Label();
-        readonly Label lblMainFmt = new Label();
-        readonly Label lblAuxFmt  = new Label();
-        readonly Label lblMainBuf = new Label();
-        readonly Label lblAuxBuf  = new Label();
-        readonly Label lblMainPer = new Label();
-        readonly Label lblAuxPer  = new Label();
+        readonly Button btnRefresh = new Button();
+        readonly Button btnCopy    = new Button();
+        readonly Button btnReload  = new Button();
 
         readonly Func<StatusSnapshot> _statusProvider;
 
@@ -55,18 +60,23 @@ namespace MirrorAudio
             _statusProvider = statusProvider ?? (() => new StatusSnapshot{ Running=false });
 
             Text = "MirrorAudio 设置";
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false; MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Dpi;
             Font = SystemFonts.MessageBoxFont;
-            ClientSize = new Size(820, 680);
+            MinimumSize = new Size(980, 640);
+            Size = new Size(1100, 720);
 
-            // 顶部“当前状态”卡片
-            var grpStatus = new GroupBox { Text = "当前状态（打开查看，关闭即释放内存）", Dock = DockStyle.Top, Padding = new Padding(12), AutoSize = true };
+            // 顶层分栏：左状态、右设置
+            var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel1, SplitterWidth = 6 };
+            split.Panel1MinSize = 360;
+            split.SplitterDistance = 380;
+
+            // —— 左侧：状态卡片 —— //
+            var leftScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(12) };
+            var grpStatus = new GroupBox { Text = "当前状态（打开查看，关闭即释放内存）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12) };
             var tblS = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
-            tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
-            tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 76));
+            tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32));
+            tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 68));
 
             AddRow(tblS, "运行状态", lblRun);
             AddRow(tblS, "输入",    lblInput);
@@ -80,71 +90,95 @@ namespace MirrorAudio
             AddRow(tblS, "副周期",  lblAuxPer);
 
             var pnlSBtns = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 6, 0, 4) };
-            var btnRefresh = new Button { Text = "刷新状态" };
-            var btnCopy    = new Button { Text = "复制状态" };
+            btnRefresh.Text = "刷新状态";
+            btnCopy.Text = "复制状态";
             btnRefresh.Click += (s,e)=> RenderStatus();
-            btnCopy.Click    += (s,e)=> { Clipboard.SetText(BuildStatusText()); MessageBox.Show("状态已复制到剪贴板。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Information); };
-            grpStatus.Controls.Add(tblS);
-            grpStatus.Controls.Add(pnlSBtns);
+            btnCopy.Click += (s,e)=> { Clipboard.SetText(BuildStatusText()); MessageBox.Show("状态已复制到剪贴板。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Information); };
             pnlSBtns.Controls.Add(btnRefresh);
             pnlSBtns.Controls.Add(btnCopy);
+            grpStatus.Controls.Add(tblS);
+            grpStatus.Controls.Add(pnlSBtns);
 
-            var title = new Label {
-                Text = "选择三通道设备；主/副可配置 独占/共享 及 事件/轮询（独占下可指定采样率/位深）。",
-                AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(12, 8, 12, 8)
-            };
+            leftScroll.Controls.Add(grpStatus);
+            split.Panel1.Controls.Add(leftScroll);
 
-            var grid = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 0, 12, 0) };
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+            // —— 右侧：设置 —— //
+            var rightScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(12, 8, 12, 8) };
 
-            foreach (var cb in new[] { cmbInput, cmbMain, cmbAux, cmbShareMain, cmbSyncMain, cmbShareAux, cmbSyncAux })
-                cb.DropDownStyle = ComboBoxStyle.DropDownList;
+            var grpDevices = new GroupBox { Text = "设备选择", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12) };
+            var gridDev = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            gridDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            gridDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
+            foreach (var cb in new[] { cmbInput, cmbMain, cmbAux }) cb.DropDownStyle = ComboBoxStyle.DropDownList;
+            AddRow(gridDev, "通道1 输入（录音/环回）", cmbInput);
+            AddRow(gridDev, "通道2 主通道（低延迟）",   cmbMain);
+            AddRow(gridDev, "通道3 副通道（推流）",     cmbAux);
+            btnReload.Text = "重新枚举设备";
+            btnReload.AutoSize = true;
+            btnReload.Click += (s,e)=> LoadDevices();
+            gridDev.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            gridDev.Controls.Add(btnReload, 1, gridDev.RowCount++);
+            grpDevices.Controls.Add(gridDev);
 
-            AddRow(grid, "通道1 输入（录音/环回）", cmbInput);
-            AddRow(grid, "通道2 主通道（低延迟）",   cmbMain);
-            AddRow(grid, "通道3 副通道（推流）",     cmbAux);
-
+            var grpMain = new GroupBox { Text = "主通道（低延迟）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12) };
+            var gridMain = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            gridMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            gridMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
+            foreach (var cb in new[] { cmbShareMain, cmbSyncMain }) cb.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbShareMain.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
             cmbSyncMain.Items.AddRange(new object[]  { "自动（事件优先）", "强制事件", "强制轮询" });
-            AddRow(grid, "主通道模式", cmbShareMain);
-            AddRow(grid, "主通道同步方式", cmbSyncMain);
+            AddRow(gridMain, "模式", cmbShareMain);
+            AddRow(gridMain, "同步方式", cmbSyncMain);
 
             numRateMain.Maximum = 384000; numRateMain.Minimum = 44100; numRateMain.Increment = 1000;
             numBitsMain.Maximum = 32;     numBitsMain.Minimum = 16;    numBitsMain.Increment = 8;
             numBufMain.Maximum  = 200;    numBufMain.Minimum  = 4;
-            AddRow(grid, "主通道采样率 (Hz，独占)",   numRateMain);
-            AddRow(grid, "主通道路位深 (bit，独占)",  numBitsMain);
-            AddRow(grid, "主通道缓冲 (ms)",           numBufMain);
+            AddRow(gridMain, "采样率 (Hz，仅独占生效)",   numRateMain);
+            AddRow(gridMain, "位深 (bit，仅独占生效)",     numBitsMain);
+            AddRow(gridMain, "缓冲 (ms)",                   numBufMain);
+            grpMain.Controls.Add(gridMain);
 
+            var grpAux = new GroupBox { Text = "副通道（推流）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12) };
+            var gridAux = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            gridAux.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            gridAux.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
+            foreach (var cb in new[] { cmbShareAux, cmbSyncAux }) cb.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbShareAux.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
             cmbSyncAux.Items.AddRange(new object[]  { "自动（事件优先）", "强制事件", "强制轮询" });
-            AddRow(grid, "副通道模式", cmbShareAux);
-            AddRow(grid, "副通道同步方式", cmbSyncAux);
+            AddRow(gridAux, "模式", cmbShareAux);
+            AddRow(gridAux, "同步方式", cmbSyncAux);
 
             numRateAux.Maximum = 384000;  numRateAux.Minimum = 44100; numRateAux.Increment = 1000;
             numBitsAux.Maximum = 32;      numBitsAux.Minimum = 16;    numBitsAux.Increment = 8;
             numBufAux.Maximum  = 400;     numBufAux.Minimum  = 50;
-            AddRow(grid, "副通道采样率 (Hz，独占)",  numRateAux);
-            AddRow(grid, "副通道路位深 (bit，独占)", numBitsAux);
-            AddRow(grid, "副通道缓冲 (ms)",          numBufAux);
+            AddRow(gridAux, "采样率 (Hz，仅独占生效)",  numRateAux);
+            AddRow(gridAux, "位深 (bit，仅独占生效)",   numBitsAux);
+            AddRow(gridAux, "缓冲 (ms)",                 numBufAux);
+            grpAux.Controls.Add(gridAux);
 
-            var tips = new Label {
-                Text = "提示：共享模式由系统混音决定格式，采样率/位深设置仅在独占模式下生效。24-bit 独占失败时，可尝试 32-bit（24-in-32 容器）。",
-                AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(12, 6, 12, 6)
-            };
-
-            var opts = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(18,6,12,6) };
+            var grpOpts = new GroupBox { Text = "其他选项", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12) };
+            var pnlOpts = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true };
             chkAutoStart.Text = "Windows 自启动";
             chkLogging.Text   = "启用日志（排障用）";
-            opts.Controls.Add(chkAutoStart);
-            opts.Controls.Add(chkLogging);
+            pnlOpts.Controls.Add(chkAutoStart);
+            pnlOpts.Controls.Add(chkLogging);
+            grpOpts.Controls.Add(pnlOpts);
 
-            var memNote = new Label {
-                Text = "内存说明：设置窗口关闭即释放；常驻仅托盘与音频线程，额外占用极低。",
-                AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(12, 4, 12, 6)
+            var tip = new Label {
+                Text = "提示：共享模式由系统混音决定格式；24-bit 独占失败时，可尝试 32-bit（24-in-32 容器）。",
+                AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(4, 4, 0, 4)
             };
 
+            // 右侧布局序列
+            rightScroll.Controls.Add(grpOpts);
+            rightScroll.Controls.Add(tip);
+            rightScroll.Controls.Add(grpAux);
+            rightScroll.Controls.Add(grpMain);
+            rightScroll.Controls.Add(grpDevices);
+
+            split.Panel2.Controls.Add(rightScroll);
+
+            // 底部按钮栏（右对齐）
             var pnlButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, Padding = new Padding(12), AutoSize = true };
             btnOk.Text = "保存"; btnCancel.Text = "取消";
             AcceptButton = btnOk; CancelButton = btnCancel;
@@ -152,19 +186,19 @@ namespace MirrorAudio
             btnOk.Click += (s,e)=> SaveAndClose();
             pnlButtons.Controls.AddRange(new Control[]{ btnOk, btnCancel });
 
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-            root.Controls.Add(grpStatus, 0, 0);
-            root.Controls.Add(title,     0, 1);
-            root.Controls.Add(grid,      0, 2);
-            root.Controls.Add(tips,      0, 3);
-            root.Controls.Add(opts,      0, 4);
-            root.Controls.Add(memNote,   0, 5);
-            root.Controls.Add(pnlButtons,0, 6);
-            Controls.Add(root);
+            Controls.Add(split);
+            Controls.Add(pnlButtons);
 
+            // 载入设备与配置
             LoadDevices();
+            LoadConfig(cur);
 
-            // 载入现有配置
+            // 初次渲染状态
+            RenderStatus();
+        }
+
+        void LoadConfig(AppSettings cur)
+        {
             Result = new AppSettings {
                 InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
                 MainShare = cur.MainShare, MainSync = cur.MainSync,
@@ -194,8 +228,6 @@ namespace MirrorAudio
 
             chkAutoStart.Checked = cur.AutoStart;
             chkLogging.Checked   = cur.EnableLogging;
-
-            RenderStatus();
         }
 
         void RenderStatus()
