@@ -285,9 +285,9 @@ namespace MirrorAudio
 
             // 两路缓冲（容量适中，减少 GC 压力）
             _bufMain = new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow = true, ReadFully = true,
-                BufferDuration = TimeSpan.FromMilliseconds(Math.max(_cfg.MainBufMs*6, 120)) };
+                BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs*6, 120)) };
             _bufAux  = new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow = true, ReadFully = true,
-                BufferDuration = TimeSpan.FromMilliseconds(Math.max(_cfg.AuxBufMs*4, 150)) };
+                BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs*4, 150)) };
 
             // 主通道初始化
             InitOne(out _mainOut, out _srcMain, out _resMain,
