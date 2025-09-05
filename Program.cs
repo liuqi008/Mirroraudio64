@@ -9,7 +9,7 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using NAudio.CoreAudioApi;
-using NAudio.CoreAudioApi.Interfaces; // 热插拔事件
+using NAudio.CoreAudioApi.Interfaces; // 设备事件
 using NAudio.MediaFoundation;
 using NAudio.Wave;
 
@@ -65,8 +65,8 @@ namespace MirrorAudio
 
         [DataMember] public int MainRate  = 192000;
         [DataMember] public int MainBits  = 24;
-        [DataMember] public int MainBufMs = 12;   // 你要低延迟：12ms（轮询更稳）
-        [DataMember] public int AuxBufMs  = 150;  // 副通道大缓冲、省资源
+        [DataMember] public int MainBufMs = 12;   // 主通道：你要求低延迟
+        [DataMember] public int AuxBufMs  = 150;  // 副通道：更稳更省
 
         [DataMember] public bool AutoStart = false;
         [DataMember] public bool EnableLogging = false;
@@ -112,7 +112,7 @@ namespace MirrorAudio
 
         AppSettings _cfg = Config.Load();
         MMDeviceEnumerator _mm;
-        System.Windows.Forms.Timer _debounce; // 400ms 去抖
+        System.Windows.Forms.Timer _debounce; // 事件去抖
         bool _running;
 
         // 设备 & 音频对象
@@ -132,7 +132,14 @@ namespace MirrorAudio
             _mm = new MMDeviceEnumerator();
             try { _mm.RegisterEndpointNotificationCallback(this); } catch { }
 
-            _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            // 托盘图标：优先加载 MirrorAudio.ico，失败退回程序图标
+            try
+            {
+                if (File.Exists("MirrorAudio.ico")) _tray.Icon = new Icon("MirrorAudio.ico");
+                else _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            }
+            catch { _tray.Icon = SystemIcons.Application; }
+
             _tray.Visible = true;
             _tray.Text = "MirrorAudio（三通道：输入/主/副）";
 
@@ -163,7 +170,6 @@ namespace MirrorAudio
                 }
             }
         }
-
         void EnsureAutoStart(bool enable)
         {
             try
@@ -190,15 +196,15 @@ namespace MirrorAudio
         }
 
         // —— 设备事件（事件驱动热插拔自愈） —— //
-        public void OnDeviceStateChanged(string id, DeviceState st) { if (IsRelevant(id)) DebounceRestart($"state {st} @ {id}"); }
-        public void OnDeviceAdded(string id)  { if (IsRelevant(id)) DebounceRestart($"added {id}"); }
-        public void OnDeviceRemoved(string id){ if (IsRelevant(id)) DebounceRestart($"removed {id}"); }
+        public void OnDeviceStateChanged(string id, DeviceState st) { if (IsRelevant(id)) DebounceRestart("state " + st + " @ " + id); }
+        public void OnDeviceAdded(string id)  { if (IsRelevant(id)) DebounceRestart("added " + id); }
+        public void OnDeviceRemoved(string id){ if (IsRelevant(id)) DebounceRestart("removed " + id); }
         public void OnDefaultDeviceChanged(DataFlow flow, Role role, string id)
         {
             if (flow == DataFlow.Render && role == Role.Multimedia && string.IsNullOrEmpty(_cfg != null ? _cfg.InputDeviceId : null))
-                DebounceRestart($"default render -> {id}");
+                DebounceRestart("default render -> " + id);
         }
-        public void OnPropertyValueChanged(string id, PropertyKey key) { if (IsRelevant(id)) DebounceRestart($"prop @ {id}"); }
+        public void OnPropertyValueChanged(string id, PropertyKey key) { if (IsRelevant(id)) DebounceRestart("prop @ " + id); }
 
         bool IsRelevant(string id)
         {
@@ -259,12 +265,19 @@ namespace MirrorAudio
             _mainIsExclusive = false; _mainEventSyncUsed = false; _mainBufEffectiveMs = _cfg.MainBufMs;
 
             WaveFormat desired = new WaveFormat(_cfg.MainRate, _cfg.MainBits, 2);
-            bool forceExclusive = _cfg.MainShare == ShareModeOption.Exclusive;
-            bool forceShared    = _cfg.MainShare == ShareModeOption.Shared;
-            bool tryExclusive   = _cfg.MainShare == ShareModeOption.Auto;
 
-            // 先试独占（若要求/自动）
-            if (forceExclusive || tryExclusive)
+            // 若输入恰是主输出设备的环回，独占必冲突 → 强制走共享路径（仅本次运行）
+            bool loopbackConflict = (_inDev.DataFlow == DataFlow.Render) &&
+                                    string.Equals(_inDev.ID, _outMain.ID, StringComparison.OrdinalIgnoreCase);
+            if (loopbackConflict && (_cfg.MainShare == ShareModeOption.Exclusive || _cfg.MainShare == ShareModeOption.Auto))
+            {
+                MessageBox.Show("检测到通道1为主输出设备的环回，独占模式与环回捕获冲突，已改用“共享”启动。若需独占，请将通道1改为 VB-Cable 等非同一设备。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+
+            bool wantExclusive = (_cfg.MainShare == ShareModeOption.Exclusive || _cfg.MainShare == ShareModeOption.Auto) && !loopbackConflict;
+
+            // 先试独占（若允许）
+            if (wantExclusive)
             {
                 if (IsFormatSupportedExclusive(_outMain, desired))
                 {
@@ -276,26 +289,40 @@ namespace MirrorAudio
                     }
                     else Log("Resampler: OFF (input==device)");
 
-                    int ms = SafeBuf(_cfg.MainBufMs, true, defMain);
-                    _mainOut = CreateOutWithPolicy(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
-                    if (_mainOut != null) { _mainIsExclusive = true; _mainBufEffectiveMs = ms; }
+                    int msEx = SafeBuf(_cfg.MainBufMs, true, defMain, minMain);
+                    _mainOut = CreateOutWithPolicy(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, msEx, _srcMain, out _mainEventSyncUsed);
+                    if (_mainOut != null) { _mainIsExclusive = true; _mainBufEffectiveMs = msEx; }
                 }
-                else if (forceExclusive)
+                // 如果 24-bit 不支持，尝试 32-bit 容器承载 24 有效位
+                if (_mainOut == null && _cfg.MainBits == 24)
                 {
-                    Alert("“强制独占”失败：设备不支持该独占格式（请调整采样率/位深）。", MessageBoxIcon.Warning);
+                    var fmt32 = new WaveFormat(_cfg.MainRate, 32, 2);
+                    if (IsFormatSupportedExclusive(_outMain, fmt32))
+                    {
+                        _resMain = new MediaFoundationResampler(_bufMain, fmt32){ ResamplerQuality = 50 };
+                        _srcMain = _resMain;
+                        int msEx2 = SafeBuf(_cfg.MainBufMs, true, defMain, minMain);
+                        _mainOut = CreateOutWithPolicy(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, msEx2, _srcMain, out _mainEventSyncUsed);
+                        if (_mainOut != null) { _mainIsExclusive = true; _mainBufEffectiveMs = msEx2; Log("Exclusive fallback: 24->32bit container"); }
+                    }
+                }
+
+                if (_mainOut == null && _cfg.MainShare == ShareModeOption.Exclusive)
+                {
+                    Alert("“强制独占”失败：请检查设备是否被占用，或调整采样率/位深（可尝试 32-bit）。", MessageBoxIcon.Warning);
                     CleanupCreated(); return;
                 }
             }
 
-            // 若独占未成或强制共享，则走共享
+            // 若独占未成或选择共享，走共享
             if (_mainOut == null)
             {
                 _srcMain = _bufMain; // 共享交给系统混音/重采样
                 Log("Resampler (shared): OFF");
-                int ms = SafeBuf(_cfg.MainBufMs, false, defMain);
-                _mainOut = CreateOutWithPolicy(_outMain, AudioClientShareMode.Shared, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
+                int msSh = SafeBuf(_cfg.MainBufMs, false, defMain);
+                _mainOut = CreateOutWithPolicy(_outMain, AudioClientShareMode.Shared, _cfg.MainSync, msSh, _srcMain, out _mainEventSyncUsed);
                 if (_mainOut == null) { Alert("主通道初始化失败（独占/共享均不可用）。", MessageBoxIcon.Error); CleanupCreated(); return; }
-                _mainIsExclusive = false; _mainBufEffectiveMs = ms;
+                _mainIsExclusive = false; _mainBufEffectiveMs = msSh;
             }
 
             // —— 副通道（共享，事件优先，失败回退轮询） —— //
@@ -401,13 +428,29 @@ namespace MirrorAudio
             return a.SampleRate == b.SampleRate && a.BitsPerSample == b.BitsPerSample && a.Channels == b.Channels;
         }
 
-        static int SafeBuf(int desiredMs, bool exclusive, double defaultPeriodMs)
+        // 缓冲安全值：独占按最小周期对齐
+        static int SafeBuf(int desiredMs, bool exclusive, double defaultPeriodMs, double minPeriodMs = 0)
         {
-            int minMs = (int)Math.Ceiling(defaultPeriodMs * (exclusive ? 3.0 : 2.0));
-            return desiredMs < minMs ? minMs : desiredMs;
+            int ms = desiredMs;
+            if (exclusive)
+            {
+                int floor = (int)Math.Ceiling(defaultPeriodMs * 3.0);
+                if (ms < floor) ms = floor;
+                if (minPeriodMs > 0)
+                {
+                    double k = Math.Ceiling(ms / minPeriodMs);
+                    ms = (int)Math.Ceiling(k * minPeriodMs);
+                }
+            }
+            else
+            {
+                int floor = (int)Math.Ceiling(defaultPeriodMs * 2.0);
+                if (ms < floor) ms = floor;
+            }
+            return ms;
         }
 
-        // —— 修复后的版本：不再在本地函数里写 out 参数 —— //
+        // 策略化创建输出（事件/轮询：强制或自动），返回是否采用事件模式
         WasapiOut CreateOutWithPolicy(MMDevice dev, AudioClientShareMode mode, SyncModeOption syncPref, int bufMs, IWaveProvider src, out bool eventUsed)
         {
             eventUsed = false;
@@ -425,19 +468,15 @@ namespace MirrorAudio
             {
                 w = TryOut(dev, mode, true, bufMs, src);
                 if (w != null) { eventUsed = true; return w; }
-
                 w = TryOut(dev, mode, false, bufMs, src);
-                eventUsed = false;
-                return w;
+                eventUsed = false; return w;
             }
 
             // Auto：事件优先，失败回退轮询
             w = TryOut(dev, mode, true, bufMs, src);
             if (w != null) { eventUsed = true; return w; }
-
             w = TryOut(dev, mode, false, bufMs, src);
-            eventUsed = false;
-            return w;
+            eventUsed = false; return w;
         }
 
         WasapiOut TryOut(MMDevice dev, AudioClientShareMode mode, bool eventSync, int bufMs, IWaveProvider src)
@@ -451,7 +490,8 @@ namespace MirrorAudio
             }
             catch (Exception ex)
             {
-                Log($"WasapiOut failed: {dev.FriendlyName} | mode={mode} event={eventSync} buf={bufMs}ms | {ex.Message}");
+                uint hr = (uint)ex.HResult;
+                Log($"WasapiOut failed: {dev.FriendlyName} | mode={mode} event={eventSync} buf={bufMs}ms | HR=0x{hr:X8} {ex.Message}");
                 return null;
             }
         }
