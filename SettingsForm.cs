@@ -8,20 +8,20 @@ namespace MirrorAudio
 {
     sealed class SettingsForm : Form
     {
+        // 设备选择
         readonly ComboBox cmbInput = new ComboBox();
         readonly ComboBox cmbMain  = new ComboBox();
         readonly ComboBox cmbAux   = new ComboBox();
 
-        readonly ComboBox cmbShareMain = new ComboBox(); // 主：共享/独占/自动
-        readonly ComboBox cmbSyncMain  = new ComboBox(); // 主：事件/轮询/自动
-
-        readonly ComboBox cmbShareAux  = new ComboBox(); // 副：共享/独占/自动
-        readonly ComboBox cmbSyncAux   = new ComboBox(); // 副：事件/轮询/自动
-
+        // 主/副参数
+        readonly ComboBox cmbShareMain = new ComboBox();
+        readonly ComboBox cmbSyncMain  = new ComboBox();
         readonly NumericUpDown numRateMain = new NumericUpDown();
         readonly NumericUpDown numBitsMain = new NumericUpDown();
         readonly NumericUpDown numBufMain  = new NumericUpDown();
 
+        readonly ComboBox cmbShareAux  = new ComboBox();
+        readonly ComboBox cmbSyncAux   = new ComboBox();
         readonly NumericUpDown numRateAux  = new NumericUpDown();
         readonly NumericUpDown numBitsAux  = new NumericUpDown();
         readonly NumericUpDown numBufAux   = new NumericUpDown();
@@ -32,7 +32,7 @@ namespace MirrorAudio
         readonly Button btnOk = new Button();
         readonly Button btnCancel = new Button();
 
-        // 状态区域控件
+        // 状态视图
         readonly Label lblRun = new Label();
         readonly Label lblInput = new Label();
         readonly Label lblMain  = new Label();
@@ -54,17 +54,29 @@ namespace MirrorAudio
         {
             _statusProvider = statusProvider ?? (() => new StatusSnapshot{ Running=false });
 
+            // 视觉：更统一的留白与字体
             Text = "MirrorAudio 设置";
+            BackColor = Color.White;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Dpi;
-            Font = SystemFonts.MessageBoxFont;
-            ClientSize = new Size(820, 680);
+            Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Regular);
+            ClientSize = new Size(840, 700);
+            DoubleBuffered = true;
 
-            // 顶部“当前状态”卡片
+            var header = new Label
+            {
+                Text = "MirrorAudio",
+                AutoSize = true,
+                Font = new Font(Font.FontFamily, 16, FontStyle.Bold),
+                Padding = new Padding(12, 10, 12, 8),
+                ForeColor = Color.FromArgb(40, 40, 40)
+            };
+
+            // —— 状态卡片 —— //
             var grpStatus = new GroupBox { Text = "当前状态（打开查看，关闭即释放内存）", Dock = DockStyle.Top, Padding = new Padding(12), AutoSize = true };
-            var tblS = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            var tblS = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4, 4, 4, 0) };
             tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
             tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 76));
 
@@ -79,19 +91,20 @@ namespace MirrorAudio
             AddRow(tblS, "副缓冲",  lblAuxBuf);
             AddRow(tblS, "副周期",  lblAuxPer);
 
-            var pnlSBtns = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 6, 0, 4) };
+            var pnlSBtns = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 6, 0, 2) };
             var btnRefresh = new Button { Text = "刷新状态" };
             var btnCopy    = new Button { Text = "复制状态" };
             btnRefresh.Click += (s,e)=> RenderStatus();
             btnCopy.Click    += (s,e)=> { Clipboard.SetText(BuildStatusText()); MessageBox.Show("状态已复制到剪贴板。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Information); };
-            grpStatus.Controls.Add(tblS);
-            grpStatus.Controls.Add(pnlSBtns);
             pnlSBtns.Controls.Add(btnRefresh);
             pnlSBtns.Controls.Add(btnCopy);
+            grpStatus.Controls.Add(tblS);
+            grpStatus.Controls.Add(pnlSBtns);
 
-            var title = new Label {
-                Text = "选择三通道设备；主/副可配置 独占/共享 及 事件/轮询（独占下可指定采样率/位深）。",
-                AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(12, 8, 12, 8)
+            // —— 配置区 —— //
+            var subtitle = new Label {
+                Text = "选择三通道设备；主/副可配置 独占/共享 与 事件/轮询（独占下可指定采样率/位深）。",
+                AutoSize = true, ForeColor = Color.FromArgb(90,90,90), Padding = new Padding(12, 6, 12, 8)
             };
 
             var grid = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 0, 12, 0) };
@@ -131,7 +144,7 @@ namespace MirrorAudio
 
             var tips = new Label {
                 Text = "提示：共享模式由系统混音决定格式，采样率/位深设置仅在独占模式下生效。24-bit 独占失败时，可尝试 32-bit（24-in-32 容器）。",
-                AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(12, 6, 12, 6)
+                AutoSize = true, ForeColor = Color.FromArgb(90,90,90), Padding = new Padding(12, 6, 12, 6)
             };
 
             var opts = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(18,6,12,6) };
@@ -142,7 +155,7 @@ namespace MirrorAudio
 
             var memNote = new Label {
                 Text = "内存说明：设置窗口关闭即释放；常驻仅托盘与音频线程，额外占用极低。",
-                AutoSize = true, ForeColor = SystemColors.GrayText, Padding = new Padding(12, 4, 12, 6)
+                AutoSize = true, ForeColor = Color.FromArgb(120,120,120), Padding = new Padding(12, 4, 12, 6)
             };
 
             var pnlButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, Padding = new Padding(12), AutoSize = true };
@@ -153,13 +166,14 @@ namespace MirrorAudio
             pnlButtons.Controls.AddRange(new Control[]{ btnOk, btnCancel });
 
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-            root.Controls.Add(grpStatus, 0, 0);
-            root.Controls.Add(title,     0, 1);
-            root.Controls.Add(grid,      0, 2);
-            root.Controls.Add(tips,      0, 3);
-            root.Controls.Add(opts,      0, 4);
-            root.Controls.Add(memNote,   0, 5);
-            root.Controls.Add(pnlButtons,0, 6);
+            root.Controls.Add(header,    0, 0);
+            root.Controls.Add(grpStatus, 0, 1);
+            root.Controls.Add(subtitle,  0, 2);
+            root.Controls.Add(grid,      0, 3);
+            root.Controls.Add(tips,      0, 4);
+            root.Controls.Add(opts,      0, 5);
+            root.Controls.Add(memNote,   0, 6);
+            root.Controls.Add(pnlButtons,0, 7);
             Controls.Add(root);
 
             LoadDevices();
