@@ -7,7 +7,7 @@ using System.Runtime.Serialization.Json;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
-using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi; // 需要引用这个命名空间
 using NAudio.Wave;
 
 namespace MirrorAudio
