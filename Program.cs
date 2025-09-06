@@ -363,50 +363,71 @@ namespace MirrorAudio
 
         // —— 设备周期：新版属性 + 兜底 —— //
         Tuple<double, double> GetPeriods(string devId)
-        {
-            Tuple<double, double> t;
-            if (_periodCache.TryGetValue(devId ?? "", out t)) return t;
-            double defMs = 10, minMs = 2;
+{
+    Tuple<double, double> t;
+    if (_periodCache.TryGetValue(devId ?? "", out t)) return t;
 
+    double defMs = 10, minMs = 2; // 兜底
+    try
+    {
+        var dev = _mm.GetDevice(devId);
+        var ac  = dev.AudioClient;
+
+        // 先用属性（不同 NAudio 版本可能返回 TimeSpan 或 long）
+        try
+        {
+            var tp = ac.GetType();
+            var defProp = tp.GetProperty("DefaultDevicePeriod");
+            var minProp = tp.GetProperty("MinimumDevicePeriod");
+            if (defProp != null && minProp != null)
+            {
+                object defVal = defProp.GetValue(ac, null);
+                object minVal = minProp.GetValue(ac, null);
+                defMs = ToMs(defVal);
+                minMs = ToMs(minVal);
+            }
+            else
+            {
+                // 没有属性就走方法反射（旧版）
+                var m = tp.GetMethod("GetDevicePeriod");
+                if (m != null)
+                {
+                    object[] args = new object[] { 0L, 0L };
+                    m.Invoke(ac, args);
+                    defMs = ((long)args[0]) / 10000.0; // 100ns -> ms
+                    minMs = ((long)args[1]) / 10000.0;
+                }
+            }
+        }
+        catch
+        {
+            // 属性读取异常时，尝试方法；失败保持兜底
             try
             {
-                var dev = _mm.GetDevice(devId);
-                var ac = dev.AudioClient;
-
-                try
+                var m = ac.GetType().GetMethod("GetDevicePeriod");
+                if (m != null)
                 {
-                    defMs = ac.DefaultDevicePeriod.TotalMilliseconds;
-                    minMs = ac.MinimumDevicePeriod.TotalMilliseconds;
-                }
-                catch
-                {
-                    var m = ac.GetType().GetMethod("GetDevicePeriod");
-                    if (m != null)
-                    {
-                        object[] args = new object[] { 0L, 0L };
-                        m.Invoke(ac, args);
-                        defMs = ((long)args[0]) / 10000.0;
-                        minMs = ((long)args[1]) / 10000.0;
-                    }
+                    object[] args = new object[] { 0L, 0L };
+                    m.Invoke(ac, args);
+                    defMs = ((long)args[0]) / 10000.0;
+                    minMs = ((long)args[1]) / 10000.0;
                 }
             } catch { }
-
-            t = Tuple.Create(defMs, minMs);
-            _periodCache[devId ?? ""] = t;
-            return t;
-        }
-
-        // —— 热插拔事件驱动 + 去抖 —— //
-        public void OnDeviceStateChanged(string deviceId, DeviceState newState) { _debounce.Stop(); _debounce.Start(); }
-        public void OnDeviceAdded(string pwstrDeviceId) { _debounce.Stop(); _debounce.Start(); }
-        public void OnDeviceRemoved(string deviceId) { _debounce.Stop(); _debounce.Start(); }
-        public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId) { _debounce.Stop(); _debounce.Start(); }
-        public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key) { }
-        protected override void OnFormClosed(FormClosedEventArgs e)
-        {
-            try { _mm.UnregisterEndpointNotificationCallback(this); } catch { }
-            Stop();
-            base.OnFormClosed(e);
         }
     }
+    catch { /* 保持 10/2 ms */ }
+
+    t = Tuple.Create(defMs, minMs);
+    _periodCache[devId ?? ""] = t;
+    return t;
+}
+
+// 把任意返回（TimeSpan 或 long/其它可转 long）统一换算为毫秒
+static double ToMs(object v)
+{
+    if (v == null) return 0;
+    var ts = v as TimeSpan?;
+    if (ts.HasValue) return ts.Value.TotalMilliseconds;
+    if (v is long l) return l / 10000.0;  // 100ns -> ms
+    try { return Convert.ToInt64(v) / 10000.0; } catch { return 0; }
 }
