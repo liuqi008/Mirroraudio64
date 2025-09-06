@@ -59,7 +59,9 @@ namespace MirrorAudio
     {
         public bool Running; public string InputRole,InputFormat,InputDevice,MainDevice,AuxDevice,MainMode,AuxMode,MainSync,AuxSync,MainFormat,AuxFormat;
         public int MainBufferMs,AuxBufferMs; public double MainDefaultPeriodMs,MainMinimumPeriodMs,AuxDefaultPeriodMs,AuxMinimumPeriodMs;
-    }
+    
+        public bool MainPassthrough, AuxPassthrough;
+}
 
     static class Config
     {
@@ -179,7 +181,7 @@ namespace MirrorAudio
             GetPeriods(_outMain,out _defMainMs,out _minMainMs); GetPeriods(_outAux,out _defAuxMs,out _minAuxMs);
 
             // 主通道：独占/共享 + 事件/轮询
-            _srcMain=_bufMain; _resMain=null; _mainIsExclusive=false; _mainEventSyncUsed=false; _mainBufEffectiveMs=_cfg.MainBufMs; _mainFmtStr="-";
+            _srcMain=_bufMain; _resMain=null; _mainIsExclusive=false; _mainEventSyncUsed=false; _mainBufEffectiveMs=0; _mainFmtStr="-";
             var desiredMain=new WaveFormat(_cfg.MainRate,_cfg.MainBits,2);
             bool isLoopMain=(_inDev.DataFlow==DataFlow.Render)&&_inDev.ID==_outMain.ID;
             bool wantExMain=(_cfg.MainShare==ShareModeOption.Exclusive||_cfg.MainShare==ShareModeOption.Auto)&&!isLoopMain;
@@ -209,7 +211,7 @@ namespace MirrorAudio
             }
 
             // 副通道
-            _srcAux=_bufAux; _resAux=null; _auxIsExclusive=false; _auxEventSyncUsed=false; _auxBufEffectiveMs=_cfg.AuxBufMs; _auxFmtStr="-";
+            _srcAux=_bufAux; _resAux=null; _auxIsExclusive=false; _auxEventSyncUsed=false; _auxBufEffectiveMs=0; _auxFmtStr="-";
             var desiredAux=new WaveFormat(_cfg.AuxRate,_cfg.AuxBits,2);
             bool isLoopAux=(_inDev.DataFlow==DataFlow.Render)&&_inDev.ID==_outAux.ID;
             bool wantExAux=(_cfg.AuxShare==ShareModeOption.Exclusive||_cfg.AuxShare==ShareModeOption.Auto)&&!isLoopAux;
@@ -278,7 +280,10 @@ namespace MirrorAudio
                 MainFormat=_mainOut!=null?_mainFmtStr:"-", AuxFormat=_auxOut!=null?_auxFmtStr:"-",
                 MainBufferMs=_mainOut!=null?_mainBufEffectiveMs:0, AuxBufferMs=_auxOut!=null?_auxBufEffectiveMs:0,
                 MainDefaultPeriodMs=_defMainMs, MainMinimumPeriodMs=_minMainMs, AuxDefaultPeriodMs=_defAuxMs, AuxMinimumPeriodMs=_minAuxMs
-            };
+            ,
+                MainPassthrough = _mainOut!=null && _mainIsExclusive && _resMain==null,
+                AuxPassthrough  = _auxOut !=null && _auxIsExclusive  && _resAux ==null
+};
         }
 
         string SafeName(string id, DataFlow flow)
