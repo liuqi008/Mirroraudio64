@@ -162,18 +162,65 @@ namespace MirrorAudio
             return _devEnum.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         }
 
+        
         void QueryPeriods(MMDevice dev, out double defMs, out double minMs)
         {
-            defMs = minMs = 0;
+            defMs = 0; minMs = 0;
             if (dev == null) return;
             try
             {
                 var ac = dev.AudioClient;
-                long defTicks, minTicks;
-                ac.GetDevicePeriod(out defTicks, out minTicks);
-                defMs = defTicks / 10000.0; // 100-ns to ms
-                minMs = minTicks / 10000.0;
+                var t = ac.GetType();
+
+                // Prefer properties if available (NAudio versions expose these)
+                var pDef = t.GetProperty("DefaultDevicePeriod");
+                var pMin = t.GetProperty("MinimumDevicePeriod");
+                if (pDef != null && pMin != null)
+                {
+                    var defTicksObj = pDef.GetValue(ac, null);
+                    var minTicksObj = pMin.GetValue(ac, null);
+                    long defTicks = Convert.ToInt64(defTicksObj);
+                    long minTicks = Convert.ToInt64(minTicksObj);
+                    defMs = defTicks / 10000.0; // 100ns to ms
+                    minMs = minTicks / 10000.0;
+                    return;
+                }
+
+                // Legacy method name variants
+                var mGet = t.GetMethod("GetDevicePeriod");
+                if (mGet != null)
+                {
+                    object[] args = new object[] { 0L, 0L };
+                    mGet.Invoke(ac, args);
+                    long defTicks = Convert.ToInt64(args[0]);
+                    long minTicks = Convert.ToInt64(args[1]);
+                    defMs = defTicks / 10000.0;
+                    minMs = minTicks / 10000.0;
+                    return;
+                }
+
+                // Some builds expose GetDefaultDevicePeriod / GetMinimumDevicePeriod
+                var mDef = t.GetMethod("GetDefaultDevicePeriod");
+                var mMin = t.GetMethod("GetMinimumDevicePeriod");
+                if (mDef != null && mMin != null)
+                {
+                    object[] a1 = new object[] { 0L };
+                    object[] a2 = new object[] { 0L };
+                    mDef.Invoke(ac, a1);
+                    mMin.Invoke(ac, a2);
+                    long defTicks = Convert.ToInt64(a1[0]);
+                    long minTicks = Convert.ToInt64(a2[0]);
+                    defMs = defTicks / 10000.0;
+                    minMs = minTicks / 10000.0;
+                    return;
+                }
             }
+            catch
+            {
+                // ignore, leave zeros
+            }
+        }
+
             catch {}
         }
 
