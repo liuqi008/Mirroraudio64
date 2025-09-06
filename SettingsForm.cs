@@ -9,19 +9,17 @@ namespace MirrorAudio
     // 依赖：AppSettings, ShareModeOption, SyncModeOption, StatusSnapshot（见 Program.cs）
     sealed class SettingsForm : Form
     {
-        // 左侧状态
+        // 左：状态
         readonly Label lblRun=new Label(), lblInput=new Label(), lblMain=new Label(), lblAux=new Label(),
                        lblMainFmt=new Label(), lblAuxFmt=new Label(), lblMainBuf=new Label(), lblAuxBuf=new Label(),
-                       lblMainPer=new Label(), lblAuxPer=new Label();
+                       lblMainPer=new Label(),  lblAuxPer=new Label();
 
-        // 右侧设置
+        // 右：设置
         readonly ComboBox cmbInput=new ComboBox(), cmbMain=new ComboBox(), cmbAux=new ComboBox(),
                           cmbShareMain=new ComboBox(), cmbSyncMain=new ComboBox(),
-                          cmbShareAux =new ComboBox(), cmbSyncAux =new ComboBox();
-
+                          cmbShareAux =new ComboBox(),  cmbSyncAux =new ComboBox();
         readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericUpDown(), numBufMain=new NumericUpDown(),
                                numRateAux =new NumericUpDown(), numBitsAux =new NumericUpDown(), numBufAux =new NumericUpDown();
-
         readonly CheckBox chkAutoStart=new CheckBox(), chkLogging=new CheckBox();
         readonly Button btnOk=new Button(), btnCancel=new Button(), btnRefresh=new Button(), btnCopy=new Button(), btnReload=new Button();
 
@@ -68,14 +66,23 @@ namespace MirrorAudio
             btnRefresh.Text="刷新状态"; btnCopy.Text="复制状态";
             btnRefresh.Click+=(s,e)=>RenderStatus();
             btnCopy.Click+=(s,e)=>{ Clipboard.SetText(BuildStatusText()); MessageBox.Show("状态已复制。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Information); };
-            pBtns.Controls.Add(btnRefresh); pBtns.Controls.Add(btnCopy);
+            pBtns.Controls.AddRange(new Control[]{ btnRefresh, btnCopy });
 
-            grpS.Controls.Add(tblS); grpS.Controls.Add(pBtns);
+            grpS.Controls.Add(tblS);
+            grpS.Controls.Add(pBtns);
             left.Controls.Add(grpS);
             split.Panel1.Controls.Add(left);
 
-            // 右：设置（设备 → 主输出 → 副输出 → 其他），用 SetChildIndex 固定顺序
+            // 右：设置（按顺序：其它 → 设备 → 主输出 → 副输出）
             var right=new Panel{ Dock=DockStyle.Fill, AutoScroll=true, Padding=new Padding(10) };
+
+            // 其它
+            var gOpt=new GroupBox{ Text="其它", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
+            var pOpt=new FlowLayoutPanel{ FlowDirection=FlowDirection.LeftToRight, Dock=DockStyle.Top, AutoSize=true };
+            chkAutoStart.Text="Windows 自启动";
+            chkLogging.Text  ="启用日志（排障时开启）";
+            pOpt.Controls.Add(chkAutoStart); pOpt.Controls.Add(chkLogging);
+            gOpt.Controls.Add(pOpt);
 
             // 设备
             var gDev=new GroupBox{ Text="设备（选择并枚举）", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
@@ -129,23 +136,15 @@ namespace MirrorAudio
             AddRow(tAux,"缓冲 (ms)",           numBufAux);
             gAux.Controls.Add(tAux);
 
-            // 其他
-            var gOpt=new GroupBox{ Text="其他", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
-            var pOpt=new FlowLayoutPanel{ FlowDirection=FlowDirection.LeftToRight, Dock=DockStyle.Top, AutoSize=true };
-            chkAutoStart.Text="Windows 自启动";
-            chkLogging.Text  ="启用日志（排障时开启）";
-            pOpt.Controls.Add(chkAutoStart); pOpt.Controls.Add(chkLogging);
-            gOpt.Controls.Add(pOpt);
-
-            // 添加 + 固定顺序（0=最上）
-            right.Controls.Add(gOpt);
+            // 添加并按序固定：其它(0) → 设备(1) → 主输出(2) → 副输出(3)
             right.Controls.Add(gAux);
             right.Controls.Add(gMain);
             right.Controls.Add(gDev);
-            right.Controls.SetChildIndex(gDev, 0);
-            right.Controls.SetChildIndex(gMain, 1);
-            right.Controls.SetChildIndex(gAux, 2);
-            right.Controls.SetChildIndex(gOpt, 3);
+            right.Controls.Add(gOpt);
+            right.Controls.SetChildIndex(gOpt, 0);
+            right.Controls.SetChildIndex(gDev, 1);
+            right.Controls.SetChildIndex(gMain, 2);
+            right.Controls.SetChildIndex(gAux, 3);
 
             split.Panel2.Controls.Add(right);
 
@@ -161,7 +160,6 @@ namespace MirrorAudio
             LoadDevices(); LoadConfig(cur); RenderStatus();
         }
 
-        // —— 数据加载 & 状态 —— //
         void LoadConfig(AppSettings cur)
         {
             Result=new AppSettings{
@@ -178,13 +176,13 @@ namespace MirrorAudio
             numBitsMain.Value=Clamp(cur.MainBits,(int)numBitsMain.Minimum,(int)numBitsMain.Maximum);
             numBufMain.Value =Clamp(cur.MainBufMs,(int)numBufMain.Minimum,(int)numBufMain.Maximum);
             cmbShareMain.SelectedIndex=cur.MainShare==ShareModeOption.Auto?0:(cur.MainShare==ShareModeOption.Exclusive?1:2);
-            cmbSyncMain .SelectedIndex=cur.MainSync ==SyncModeOption .Auto?0:(cur.MainSync ==SyncModeOption .Event     ?1:2);
+            cmbSyncMain .SelectedIndex=cur.MainSync ==SyncModeOption .Auto?0:(cur.MainSync ==SyncModeOption .Event?1:2);
 
             numRateAux.Value =Clamp(cur.AuxRate,(int)numRateAux.Minimum,(int)numRateAux.Maximum);
             numBitsAux.Value =Clamp(cur.AuxBits,(int)numBitsAux.Minimum,(int)numBitsAux.Maximum);
             numBufAux.Value  =Clamp(cur.AuxBufMs,(int)numBufAux.Minimum,(int)numBufAux.Maximum);
             cmbShareAux.SelectedIndex=cur.AuxShare==ShareModeOption.Auto?0:(cur.AuxShare==ShareModeOption.Exclusive?1:2);
-            cmbSyncAux .SelectedIndex=cur.AuxSync ==SyncModeOption .Auto?0:(cur.AuxSync ==SyncModeOption .Event     ?1:2);
+            cmbSyncAux .SelectedIndex=cur.AuxSync ==SyncModeOption .Auto?0:(cur.AuxSync ==SyncModeOption .Event?1:2);
 
             chkAutoStart.Checked=cur.AutoStart; chkLogging.Checked=cur.EnableLogging;
         }
@@ -221,10 +219,9 @@ namespace MirrorAudio
             return sb.ToString();
         }
 
-        // —— 工具 —— //
         static void AddRow(TableLayoutPanel t,string label,Control c)
         {
-            var l=new Label{ Text=label,AutoSize=true,TextAlign=ContentAlignment.MiddleLeft,Dock=DockStyle.Fill,Padding=new Padding(0,6,0,6) };
+            var l=new Label{ Text=label, AutoSize=true, TextAlign=ContentAlignment.MiddleLeft, Dock=DockStyle.Fill, Padding=new Padding(0,6,0,6) };
             c.Dock=DockStyle.Fill;
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             t.Controls.Add(l,0,t.RowCount);
