@@ -1,8 +1,5 @@
 
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using NAudio.CoreAudioApi;
@@ -24,7 +21,7 @@ namespace MirrorAudio
         public ShareModeOption AuxShare  = ShareModeOption.Exclusive;
         public SyncModeOption  MainSync  = SyncModeOption.Event;
         public SyncModeOption  AuxSync   = SyncModeOption.Event;
-        public int MainBufMs = 6;   // request 6ms, will be aligned in exclusive
+        public int MainBufMs = 6;
         public int AuxBufMs  = 6;
         public int MainRate  = 192000;
         public int AuxRate   = 44100;
@@ -52,7 +49,6 @@ namespace MirrorAudio
         readonly ContextMenuStrip _menu;
         readonly ToolStripMenuItem _miStart, _miStop, _miSettings, _miExit;
 
-        // NAudio state
         readonly MMDeviceEnumerator _devEnum = new MMDeviceEnumerator();
         WasapiOut _mainOut, _auxOut;
         IWaveProvider _mainSrc, _auxSrc;
@@ -61,12 +57,9 @@ namespace MirrorAudio
         bool _mainRawEnabled, _auxRawEnabled;
         int  _mainBufEffectiveMs, _auxBufEffectiveMs;
         string _mainFmtStr, _auxFmtStr;
-
-        // Devices
         MMDevice _outMain, _outAux;
         double _defMainMs, _minMainMs, _defAuxMs, _minAuxMs;
 
-        // Config
         public AppSettings Settings = new AppSettings();
 
         public TrayApp()
@@ -76,9 +69,7 @@ namespace MirrorAudio
             _miStop     = new ToolStripMenuItem("停止(&T)", null, (s,e)=>Stop());
             _miSettings = new ToolStripMenuItem("设置(&G)", null, (s,e)=>ShowSettings());
             _miExit     = new ToolStripMenuItem("退出(&X)", null, (s,e)=>{ Stop(); Application.Exit(); });
-
             _menu.Items.AddRange(new ToolStripItem[]{ _miStart, _miStop, new ToolStripSeparator(), _miSettings, new ToolStripSeparator(), _miExit });
-
             _ni = new NotifyIcon { Text = "MirrorAudio", Visible = true, ContextMenuStrip = _menu };
             try { _ni.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch {}
         }
@@ -114,23 +105,19 @@ namespace MirrorAudio
 
             try
             {
-                // Choose devices
                 _outMain = PickRenderDevice(Settings.MainDeviceId);
                 _outAux  = PickRenderDevice(Settings.AuxDeviceId);
 
                 QueryPeriods(_outMain, out _defMainMs, out _minMainMs);
                 QueryPeriods(_outAux,  out _defAuxMs,  out _minAuxMs);
 
-                // Build providers (demo: silence provider; in your real app, plug actual mixer/source here)
                 _mainSrc = BuildSineSource(Settings.MainRate, Settings.MainBits, Settings.Channels, 220.0);
                 _auxSrc  = BuildSineSource(Settings.AuxRate,  Settings.AuxBits,  Settings.Channels, 440.0);
 
-                // MAIN
                 _mainOut = BuildWasapiWithRawFallback(_outMain, Settings.MainShare, Settings.MainSync, Settings.MainBufMs, _mainSrc,
                                                       out _mainIsExclusive, out _mainEventSyncUsed, out _mainRawEnabled,
                                                       out _mainBufEffectiveMs, out _mainFmtStr);
 
-                // AUX
                 _auxOut = BuildWasapiWithRawFallback(_outAux, Settings.AuxShare, Settings.AuxSync, Settings.AuxBufMs, _auxSrc,
                                                      out _auxIsExclusive, out _auxEventSyncUsed, out _auxRawEnabled,
                                                      out _auxBufEffectiveMs, out _auxFmtStr);
@@ -162,7 +149,6 @@ namespace MirrorAudio
             return _devEnum.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         }
 
-        
         void QueryPeriods(MMDevice dev, out double defMs, out double minMs)
         {
             defMs = 0; minMs = 0;
@@ -172,21 +158,17 @@ namespace MirrorAudio
                 var ac = dev.AudioClient;
                 var t = ac.GetType();
 
-                // Prefer properties if available (NAudio versions expose these)
                 var pDef = t.GetProperty("DefaultDevicePeriod");
                 var pMin = t.GetProperty("MinimumDevicePeriod");
                 if (pDef != null && pMin != null)
                 {
-                    var defTicksObj = pDef.GetValue(ac, null);
-                    var minTicksObj = pMin.GetValue(ac, null);
-                    long defTicks = Convert.ToInt64(defTicksObj);
-                    long minTicks = Convert.ToInt64(minTicksObj);
-                    defMs = defTicks / 10000.0; // 100ns to ms
+                    long defTicks = Convert.ToInt64(pDef.GetValue(ac, null));
+                    long minTicks = Convert.ToInt64(pMin.GetValue(ac, null));
+                    defMs = defTicks / 10000.0;
                     minMs = minTicks / 10000.0;
                     return;
                 }
 
-                // Legacy method name variants
                 var mGet = t.GetMethod("GetDevicePeriod");
                 if (mGet != null)
                 {
@@ -199,7 +181,6 @@ namespace MirrorAudio
                     return;
                 }
 
-                // Some builds expose GetDefaultDevicePeriod / GetMinimumDevicePeriod
                 var mDef = t.GetMethod("GetDefaultDevicePeriod");
                 var mMin = t.GetMethod("GetMinimumDevicePeriod");
                 if (mDef != null && mMin != null)
@@ -217,11 +198,8 @@ namespace MirrorAudio
             }
             catch
             {
-                // ignore, leave zeros
+                // leave 0
             }
-        }
-
-            catch {}
         }
 
         IWaveProvider BuildSineSource(int rate, int bits, int ch, double freq)
@@ -230,7 +208,6 @@ namespace MirrorAudio
             return new SignalGeneratorProvider(wf, freq);
         }
 
-        // Core: Build WasapiOut with RAW→non-RAW fallback for exclusive; graceful shared fallback if configured Auto
         WasapiOut BuildWasapiWithRawFallback(MMDevice dev, ShareModeOption share, SyncModeOption syncPref, int reqBufMs, IWaveProvider src,
                                              out bool isExclusive, out bool eventUsed, out bool rawEnabled,
                                              out int effBufMs, out string fmtStr)
@@ -238,7 +215,6 @@ namespace MirrorAudio
             isExclusive = false; eventUsed = false; rawEnabled = false; effBufMs = 0; fmtStr = "-";
             if (dev == null || src == null) return null;
 
-            // Determine modes
             var tryExclusive = (share != ShareModeOption.Shared);
             var allowSharedFallback = (share != ShareModeOption.Exclusive);
 
@@ -246,22 +222,19 @@ namespace MirrorAudio
 
             if (tryExclusive)
             {
-                // try RAW + exclusive
                 if (TrySetRaw(dev))
                 {
                     outp = CreateOut(dev, AudioClientShareMode.Exclusive, syncPref, reqBufMs, src, out eventUsed, out effBufMs, out fmtStr);
                     if (outp != null) { isExclusive = true; rawEnabled = true; return outp; }
-                    ClearRaw(dev); // clear and retry normal exclusive
+                    ClearRaw(dev);
                 }
 
-                // try normal exclusive
                 outp = CreateOut(dev, AudioClientShareMode.Exclusive, syncPref, reqBufMs, src, out eventUsed, out effBufMs, out fmtStr);
                 if (outp != null) { isExclusive = true; return outp; }
             }
 
             if (allowSharedFallback)
             {
-                // shared (RAW is meaningless in shared)
                 outp = CreateOut(dev, AudioClientShareMode.Shared, syncPref, reqBufMs, src, out eventUsed, out effBufMs, out fmtStr);
                 if (outp != null) { isExclusive = false; return outp; }
             }
@@ -280,13 +253,11 @@ namespace MirrorAudio
                 var wo = new WasapiOut(dev, mode, useEvent, reqBufMs);
                 wo.Init(src);
                 w = wo;
-
-                // effective buffer ms (approx): in exclusive/event, driver aligns to period; we expose requested as effective if no query
                 effBufMs = reqBufMs;
                 eventUsed = useEvent;
                 fmtStr = FormatStringFromWaveProvider(src);
             }
-            catch (Exception)
+            catch
             {
                 if (w != null) { try { w.Dispose(); } catch {} }
                 w = null;
@@ -304,7 +275,6 @@ namespace MirrorAudio
             catch { return "-"; }
         }
 
-        // Reflection-based RAW toggling (max compatibility). Works if NAudio exposes AudioClientProperties/AudioClientStreamOptions.Raw.
         bool TrySetRaw(MMDevice dev)
         {
             try
@@ -318,13 +288,10 @@ namespace MirrorAudio
                 if (propsType == null || catType == null || optType == null || setMethod == null) return false;
 
                 var props = Activator.CreateInstance(propsType);
-                // Category = Media
                 var catMedia = Enum.Parse(catType, "Media");
                 propsType.GetProperty("Category").SetValue(props, catMedia, null);
-                // Options = Raw
                 var optRaw = Enum.Parse(optType, "Raw");
                 propsType.GetProperty("Options").SetValue(props, optRaw, null);
-
                 setMethod.Invoke(ac, new object[] { props });
                 return true;
             }
@@ -384,7 +351,6 @@ namespace MirrorAudio
         }
     }
 
-    // Simple sine wave provider for demonstration / probing
     internal sealed class SignalGeneratorProvider : IWaveProvider
     {
         readonly WaveFormat _format;
@@ -421,7 +387,6 @@ namespace MirrorAudio
 
         void WriteSample(byte[] buf, int ofs, double val, int bps)
         {
-            // clamp
             if (val > 1) val = 1;
             if (val < -1) val = -1;
 
@@ -431,14 +396,14 @@ namespace MirrorAudio
                 buf[ofs+0] = (byte)(s & 0xFF);
                 buf[ofs+1] = (byte)((s >> 8) & 0xFF);
             }
-            else if (bps == 3) // 24-bit little endian
+            else if (bps == 3)
             {
                 int s = (int)(val * 8388607.0);
                 buf[ofs+0] = (byte)(s & 0xFF);
                 buf[ofs+1] = (byte)((s >> 8) & 0xFF);
                 buf[ofs+2] = (byte)((s >> 16) & 0xFF);
             }
-            else // 32-bit
+            else
             {
                 int s = (int)(val * int.MaxValue);
                 buf[ofs+0] = (byte)(s & 0xFF);
