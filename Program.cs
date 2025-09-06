@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -63,7 +62,7 @@ namespace MirrorAudio
         }
     }
 
-    // 音频图：Capture -> (Resample if needed) -> Main/Aux 两路输出
+    // —— 音频图：Capture -> (Resample if needed) -> Main/Aux 两路输出 —— //
     sealed class AudioGraph : IDisposable
     {
         readonly AppSettings _cfg;
@@ -84,9 +83,8 @@ namespace MirrorAudio
 
         static WaveFormat MakeTarget(int rate, int bits, int channels)
         {
-            if (bits == 16) return WaveFormat.CreatePcmWaveFormat(rate, channels);
-            // 24/32 位用 IEEE float 以保持兼容性（多数驱动对 float 直通/混音路径最佳）
-            return WaveFormat.CreateIeeeFloatWaveFormat(rate, channels);
+            if (bits == 16) return new WaveFormat(rate, bits, channels); // PCM
+            return WaveFormat.CreateIeeeFloatWaveFormat(rate, channels); // float
         }
 
         static IWaveProvider MaybeResample(IWaveProvider src, WaveFormat dst, int quality)
@@ -97,7 +95,6 @@ namespace MirrorAudio
             {
                 return src; // 直通
             }
-            // 使用 MediaFoundationResampler（质量 1..60）
             var res = new MediaFoundationResampler(src, dst);
             res.ResamplerQuality = quality;
             return res;
@@ -108,18 +105,18 @@ namespace MirrorAudio
             if (dev.DataFlow == DataFlow.Render)
             {
                 var loop = new WasapiLoopbackCapture(dev);
-                loop.ShareMode = AudioClientShareMode.Shared; // 环回只能共享
+                loop.ShareMode = AudioClientShareMode.Shared;
                 return loop;
             }
             else
             {
-                var mic = new WasapiCapture(dev, false, 20); // 20ms 内部缓冲，低开销
-                mic.ShareMode = AudioClientShareMode.Shared; // 输入默认共享（更兼容）
+                var mic = new WasapiCapture(dev, false, 20);
+                mic.ShareMode = AudioClientShareMode.Shared;
                 return mic;
             }
         }
 
-        static AudioClientShareMode ResolveShare(ShareModeOption opt, MMDevice dev, bool preferExclusive)
+        static AudioClientShareMode ResolveShare(ShareModeOption opt, bool preferExclusive)
         {
             if (opt == ShareModeOption.Exclusive) return AudioClientShareMode.Exclusive;
             if (opt == ShareModeOption.Shared)   return AudioClientShareMode.Shared;
@@ -150,39 +147,31 @@ namespace MirrorAudio
             inFmt = DescribeFmt(_cap.WaveFormat);
 
             // Main
-            mainExclusive = _exclusiveMain =
-                ResolveShare(_cfg.MainShare, _mainDev, true) == AudioClientShareMode.Exclusive;
+            mainExclusive = _exclusiveMain = ResolveShare(_cfg.MainShare, true) == AudioClientShareMode.Exclusive;
             mainEvent = _eventMain = ResolveEvent(_cfg.MainSync, true);
             _mainBufMs = _cfg.MainBufMs;
 
             // Aux
-            auxExclusive = _exclusiveAux =
-                ResolveShare(_cfg.AuxShare, _auxDev, false) == AudioClientShareMode.Exclusive;
+            auxExclusive = _exclusiveAux = ResolveShare(_cfg.AuxShare, false) == AudioClientShareMode.Exclusive;
             auxEvent = _eventAux = ResolveEvent(_cfg.AuxSync, true);
             _auxBufMs = _cfg.AuxBufMs;
 
-            // Target formats
-            var ch = Math.Max(1, Math.Min( _cap.WaveFormat.Channels, 2)); // 限 1/2 声道
+            var ch = Math.Max(1, Math.Min(_cap.WaveFormat.Channels, 2));
             _targetMain = _exclusiveMain ? MakeTarget(_cfg.MainRate, _cfg.MainBits, ch)
                                          : WaveFormat.CreateIeeeFloatWaveFormat(_cap.WaveFormat.SampleRate, ch);
-            _targetAux  = _exclusiveAux  ? MakeTarget(_cfg.AuxRate,  _cfg.AuxBits,  ch)
+            _targetAux  = _exclusiveAux  ? MakeTarget(_cfg.AuxRate, _cfg.AuxBits, ch)
                                          : WaveFormat.CreateIeeeFloatWaveFormat(_cap.WaveFormat.SampleRate, ch);
 
-            // Resampler：主=50，副=40
-            var src = (IWaveProvider)_buf;
-            _toMain = MaybeResample(src, _targetMain, 50);
-            _toAux  = MaybeResample(src, _targetAux,  40);
+            _toMain = MaybeResample(_buf, _targetMain, 50);
+            _toAux  = MaybeResample(_buf, _targetAux, 40);
 
-            // Outputs
             _outMain = new WasapiOut(_mainDev, _exclusiveMain ? AudioClientShareMode.Exclusive : AudioClientShareMode.Shared,
                                      _eventMain, _mainBufMs);
-            _outMain.Init(_toMain);
-            _outMain.Play();
+            _outMain.Init(_toMain); _outMain.Play();
 
             _outAux = new WasapiOut(_auxDev, _exclusiveAux ? AudioClientShareMode.Exclusive : AudioClientShareMode.Shared,
                                     _eventAux, _auxBufMs);
-            _outAux.Init(_toAux);
-            _outAux.Play();
+            _outAux.Init(_toAux); _outAux.Play();
 
             mainFmt = DescribeFmt(_targetMain);
             auxFmt  = DescribeFmt(_targetAux);
@@ -197,18 +186,18 @@ namespace MirrorAudio
 
         public void StopSafe()
         {
-            try { if (_outMain != null) _outMain.Stop(); } catch { }
-            try { if (_outAux  != null) _outAux.Stop();  } catch { }
-            try { if (_cap     != null) _cap.StopRecording(); } catch { }
+            try { _outMain?.Stop(); } catch { }
+            try { _outAux?.Stop();  } catch { }
+            try { _cap?.StopRecording(); } catch { }
 
             Dispose();
         }
 
         public void Dispose()
         {
-            try { if (_outMain != null) _outMain.Dispose(); } catch { }
-            try { if (_outAux  != null) _outAux.Dispose();  } catch { }
-            try { if (_cap     != null) _cap.Dispose();     } catch { }
+            try { _outMain?.Dispose(); } catch { }
+            try { _outAux?.Dispose();  } catch { }
+            try { _cap?.Dispose();     } catch { }
             _outMain = null; _outAux = null; _cap = null; _buf = null;
         }
 
@@ -221,7 +210,7 @@ namespace MirrorAudio
         }
     }
 
-    // 托盘与设置
+    // —— 托盘与设置 —— //
     sealed class TrayApp : Form, IMMNotificationClient
     {
         readonly NotifyIcon _tray = new NotifyIcon();
@@ -230,7 +219,6 @@ namespace MirrorAudio
         readonly System.Windows.Forms.Timer _debounce = new System.Windows.Forms.Timer() { Interval = 300 };
         AppSettings _cfg = new AppSettings();
 
-        // 运行态
         AudioGraph _graph;
         bool _running, _mainIsExclusive, _mainEventSyncUsed, _auxIsExclusive, _auxEventSyncUsed;
         int _mainBufEffectiveMs, _auxBufEffectiveMs;
@@ -244,12 +232,10 @@ namespace MirrorAudio
             Logger.Enabled = _cfg.EnableLogging;
             try { _mm.RegisterEndpointNotificationCallback(this); } catch { }
 
-            // 托盘图标：优先用 Assets\MirrorAudio.ico
             try
             {
                 string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "MirrorAudio.ico");
-                if (File.Exists(icoPath)) _tray.Icon = new Icon(icoPath);
-                else _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                _tray.Icon = File.Exists(icoPath) ? new Icon(icoPath) : Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             }
             catch { _tray.Icon = SystemIcons.Application; }
             _tray.Visible = true; _tray.Text = "MirrorAudio";
@@ -372,47 +358,45 @@ namespace MirrorAudio
         {
             try { return _mm.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications); } catch { }
             try { return _mm.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia); } catch { }
-            // 兜底：随便取一个 Render 做环回
             return _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         }
 
-        // —— 设备周期：反射尝试一次，失败退 10/2 ms —— //
+        // —— 设备周期：新版属性 + 兜底 —— //
         Tuple<double, double> GetPeriods(string devId)
         {
             Tuple<double, double> t;
             if (_periodCache.TryGetValue(devId ?? "", out t)) return t;
             double defMs = 10, minMs = 2;
+
             try
             {
                 var dev = _mm.GetDevice(devId);
                 var ac = dev.AudioClient;
-                // 某些 NAudio 版本上公开 GetDevicePeriod；若不可用则走异常
-                long def, min;
+
                 try
                 {
-                    ac.GetDevicePeriod(out def, out min);
-                    defMs = def / 10000.0; // 100ns -> ms
-                    minMs = min / 10000.0;
+                    defMs = ac.DefaultDevicePeriod.TotalMilliseconds;
+                    minMs = ac.MinimumDevicePeriod.TotalMilliseconds;
                 }
                 catch
                 {
-                    // 反射兜底（若无则维持 10/2）
                     var m = ac.GetType().GetMethod("GetDevicePeriod");
                     if (m != null)
                     {
                         object[] args = new object[] { 0L, 0L };
                         m.Invoke(ac, args);
-                        defMs = (long)args[0] / 10000.0;
-                        minMs = (long)args[1] / 10000.0;
+                        defMs = ((long)args[0]) / 10000.0;
+                        minMs = ((long)args[1]) / 10000.0;
                     }
                 }
             } catch { }
+
             t = Tuple.Create(defMs, minMs);
             _periodCache[devId ?? ""] = t;
             return t;
         }
 
-        // —— IMMNotificationClient：设备热插拔事件驱动 + 去抖 —— //
+        // —— 热插拔事件驱动 + 去抖 —— //
         public void OnDeviceStateChanged(string deviceId, DeviceState newState) { _debounce.Stop(); _debounce.Start(); }
         public void OnDeviceAdded(string pwstrDeviceId) { _debounce.Stop(); _debounce.Start(); }
         public void OnDeviceRemoved(string deviceId) { _debounce.Stop(); _debounce.Start(); }
