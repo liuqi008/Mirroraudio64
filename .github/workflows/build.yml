@@ -5,7 +5,6 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -14,14 +13,13 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-          cache: true
-          cache-dependency-path: MirrorAudio.csproj
+          cache: false
 
       - name: Restore
-        run: dotnet restore ./MirrorAudio.csproj --nologo
+        run: dotnet restore ./MirrorAudio.csproj
 
       - name: Build x64 (Release)
-        run: dotnet build ./MirrorAudio.csproj -c Release -p:PlatformTarget=x64 -p:GenerateRuntimeConfigurationFiles=true --no-restore --nologo
+        run: dotnet build ./MirrorAudio.csproj -c Release /p:PlatformTarget=x64 /p:GenerateRuntimeConfigurationFiles=true --no-restore --nologo
 
       - name: Package full output
         shell: pwsh
@@ -30,7 +28,8 @@ jobs:
           if (-not (Test-Path $outDir)) { Write-Error "Output not found: $outDir"; exit 1 }
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           Copy-Item "$outDir\*" artifacts -Recurse -Force
-          Write-Host "Packed files:"; Get-ChildItem artifacts | % { Write-Host " - " $_.Name }
+          Write-Host "Packed files:"
+          Get-ChildItem artifacts | % { Write-Host " - " $_.Name }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
