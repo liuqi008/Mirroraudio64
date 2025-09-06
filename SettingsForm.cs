@@ -58,13 +58,13 @@ namespace MirrorAudio
             AddRow(tblS,"主格式",lblMainFmt);
             AddRow(tblS,"主缓冲",lblMainBuf);
             AddRow(tblS,"主周期",lblMainPer);
-            AddRow(tblS,"主直通",lblMainPass);     // 新增
+            AddRow(tblS,"主直通",lblMainPass);     // 独占直通/共享混音直通/重采样
             AddRow(tblS,"副通道",lblAux);
             AddRow(tblS,"副格式",lblAuxFmt);
             AddRow(tblS,"副缓冲",lblAuxBuf);
             AddRow(tblS,"副周期",lblAuxPer);
-            AddRow(tblS,"副直通",lblAuxPass);      // 新增
-            AddRow(tblS,"副音质(Q)",lblAuxQ);      // 新增：显示 30/40/50
+            AddRow(tblS,"副直通",lblAuxPass);      // 独占直通/共享混音直通/重采样
+            AddRow(tblS,"副音质(Q)",lblAuxQ);      // 30/40/50
 
             var pBtns=new FlowLayoutPanel{ FlowDirection=FlowDirection.LeftToRight, Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(0,6,0,4)};
             btnRefresh.Text="刷新状态"; btnCopy.Text="复制状态";
@@ -134,7 +134,7 @@ namespace MirrorAudio
             pOpt.Controls.Add(chkAutoStart); pOpt.Controls.Add(chkLogging);
             gOpt.Controls.Add(pOpt); right.Controls.Add(gOpt);
 
-            // 按照“从下到上 Add”保证显示顺序为：设备→主→副→其他
+            // 右侧顺序已按从上到下：设备→主→副→其他（通过Add顺序保证）
             split.Panel2.Controls.Clear();
             split.Panel2.Controls.Add(right);
 
