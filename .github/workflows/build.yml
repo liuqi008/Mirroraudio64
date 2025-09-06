@@ -21,8 +21,8 @@ jobs:
         run: dotnet restore ./MirrorAudio.csproj --nologo
 
       - name: Build x64 (Release)
-        run: dotnet build ./MirrorAudio.csproj -c Release -p:PlatformTarget=x64 -p:GenerateRuntimeConfigurationFiles=true --no-restore --nologo
-
+        run: dotnet build ./MirrorAudio.csproj -c Release --no-restore --nologo
+        
       - name: Package full output
         shell: pwsh
         run: |
