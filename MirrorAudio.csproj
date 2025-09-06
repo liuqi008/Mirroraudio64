@@ -1,23 +1,29 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
     <TargetFramework>net48</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>MirrorAudio</AssemblyName>
+    <RootNamespace>MirrorAudio</RootNamespace>
     <Platforms>x64</Platforms>
-    <PlatformTarget>x64</PlatformTarget>
-    <Nullable>disable</Nullable>
-    <LangVersion>7.3</LangVersion>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
     <Prefer32Bit>false</Prefer32Bit>
-    <ApplicationIcon>Assets\MirrorAudio.ico</ApplicationIcon>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- 仅当图标存在时才使用，避免缺文件导致 CS7064 -->
+    <ApplicationIcon Condition="Exists('Assets\MirrorAudio.ico')">Assets\MirrorAudio.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="Microsoft.Windows.Compatibility" Version="7.0.5" />
   </ItemGroup>
 
+  <!-- 保证编译打包能带上图标（若存在） -->
   <ItemGroup>
-    <Content Include="Assets\MirrorAudio.ico">
+    <Content Include="Assets\MirrorAudio.ico" Condition="Exists('Assets\MirrorAudio.ico')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
 </Project>
