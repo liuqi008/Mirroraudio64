@@ -19,7 +19,7 @@ namespace MirrorAudio
         [STAThread]
         static void Main()
         {
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            // net48: 无 HighDpiMode API，保持传统写法
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
@@ -311,7 +311,7 @@ namespace MirrorAudio
             WaveFormat mix = null; try { mix = _outAux.AudioClient.MixFormat; } catch { }
             IWaveProvider src = _bufAux;
 
-            if (mix != null && !Eq(mix, _bufAux.WwaveFormat))
+            if (mix != null && !Eq(mix, _bufAux.WaveFormat))
             {
                 int q = Clamp(_cfg.AuxResamplerQuality, 30, 50);
                 _resAux = new MediaFoundationResampler(_bufAux, mix) { ResamplerQuality = q };
@@ -346,14 +346,14 @@ namespace MirrorAudio
             try
             {
                 var useEvent = (sync == SyncModeOption.Event) || (sync == SyncModeOption.Auto && PreferEvent());
-                var wo = new WasapiOut(dev, mode, useEvent ? 0 : 0, ms);
+                // 修正构造函数参数：第三个为 bool useEventSync，第四个为 latencyMs
+                var wo = new WasapiOut(dev, mode, useEvent, ms);
                 eventUsed = useEvent;
 
-                if (forceFormat != null)
+                if (forceFormat != null && !Eq(src.WaveFormat, forceFormat))
                 {
-                    // 对于独占强制格式的情况，用一个格式转换包装器（在直通时不需要）
-                    if (!Eq(src.WaveFormat, forceFormat))
-                        src = new MediaFoundationResampler(src, forceFormat) { ResamplerQuality = 50 };
+                    // 若强制格式与源不一致，补一个转换器（直通时不会走到这里）
+                    src = new MediaFoundationResampler(src, forceFormat) { ResamplerQuality = 50 };
                 }
                 wo.Init(src);
                 return wo;
@@ -377,6 +377,8 @@ namespace MirrorAudio
             }
             return ms;
         }
+
+        static int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
         WaveFormat WaveFormatFromUser(int rate, int bits, int ch, bool preferFloat)
         {
@@ -408,9 +410,11 @@ namespace MirrorAudio
             try
             {
                 var ac = dev.AudioClient;
-                long def100ns, min100ns;
-                ac.GetDevicePeriod(out def100ns, out min100ns);
-                defMs = def100ns / 10000.0; minMs = min100ns / 10000.0;
+                // NAudio 2.2.1: 使用属性而非 GetDevicePeriod 方法
+                long def100ns = ac.DefaultDevicePeriod;
+                long min100ns = ac.MinimumDevicePeriod;
+                defMs = def100ns / 10000.0; // 100ns → ms
+                minMs = min100ns / 10000.0;
             }
             catch { }
             t = Tuple.Create(defMs, minMs);
@@ -455,8 +459,7 @@ namespace MirrorAudio
             try
             {
                 var ac = dev.AudioClient;
-                var hr = ac.IsFormatSupported(AudioClientShareMode.Exclusive, fmt);
-                return hr;
+                return ac.IsFormatSupported(AudioClientShareMode.Exclusive, fmt);
             } catch { return false; }
         }
 
@@ -536,7 +539,7 @@ namespace MirrorAudio
         void DebouncedRestart() { _debounce.Stop(); _debounce.Start(); }
     }
 
-    // ============== 配置存取（极简 JSON-free，本地 ini 样式） ==============
+    // ============== 配置存取（极简） ==============
 
     static class ConfigStore
     {
