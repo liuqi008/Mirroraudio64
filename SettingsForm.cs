@@ -15,6 +15,7 @@ namespace MirrorAudio
         readonly Label lblRun=new Label(), lblInput=new Label(), lblMain=new Label(), lblAux=new Label(),
                        lblMainFmt=new Label(), lblAuxFmt=new Label(), lblMainBuf=new Label(), lblAuxBuf=new Label(),
                        lblMainPer=new Label(), lblAuxPer=new Label();
+                       readonly Label lblMainPass=new Label(), lblAuxPass=new Label();
 
         // 右侧设置控件
         readonly ComboBox cmbInput=new ComboBox(), cmbMain=new ComboBox(), cmbAux=new ComboBox(),
@@ -68,10 +69,12 @@ namespace MirrorAudio
             AddRow(tblS, "主格式", lblMainFmt);
             AddRow(tblS, "主缓冲", lblMainBuf);
             AddRow(tblS, "主周期", lblMainPer);
+            AddRow(tblS, "主直通", lblMainPass);
             AddRow(tblS, "副通道", lblAux);
             AddRow(tblS, "副格式", lblAuxFmt);
             AddRow(tblS, "副缓冲", lblAuxBuf);
             AddRow(tblS, "副周期", lblAuxPer);
+            AddRow(tblS, "副直通", lblAuxPass);
 
             var pBtns = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 6, 0, 4) };
             btnRefresh.Text = "刷新状态";
@@ -235,6 +238,8 @@ namespace MirrorAudio
             lblAuxBuf.Text  = s.AuxBufferMs >0 ? (s.AuxBufferMs  + " ms") : "-";
             lblMainPer.Text = "默认 " + s.MainDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.MainMinimumPeriodMs.ToString("0.##") + " ms";
             lblAuxPer.Text  = "默认 " + s.AuxDefaultPeriodMs .ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs .ToString("0.##") + " ms";
+            lblMainPass.Text = s.MainMode=="-" ? "-" : (s.MainPassthrough ? "直通（独占&无重采样）" : (s.MainMode=="独占" ? "非直通（可能重采样）" : "不适用（共享混音）"));
+            lblAuxPass.Text  = s.AuxMode=="-"  ? "-" : (s.AuxPassthrough  ? "直通（独占&无重采样）" : (s.AuxMode=="独占"  ? "非直通（可能重采样）" : "不适用（共享混音）"));
         }
 
         string BuildStatusText()
@@ -252,6 +257,9 @@ namespace MirrorAudio
             sb.AppendLine("副格式: " + (s.AuxFormat??"-"));
             sb.AppendLine("副缓冲: " + (s.AuxBufferMs>0 ? (s.AuxBufferMs + " ms") : "-"));
             sb.AppendLine("副周期: 默认 " + s.AuxDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs.ToString("0.##") + " ms");
+            
+            sb.AppendLine("主直通: " + (s.MainMode=="-" ? "-" : (s.MainPassthrough ? "直通" : (s.MainMode=="独占" ? "非直通" : "不适用"))));
+            sb.AppendLine("副直通: " + (s.AuxMode=="-"  ? "-" : (s.AuxPassthrough  ? "直通" : (s.AuxMode=="独占"  ? "非直通" : "不适用"))));
             return sb.ToString();
         }
 
