@@ -1,6 +1,6 @@
 name: Build MirrorAudio
 on:
-  workflow_dispatch:   # 允许在 Actions 页面手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,22 +13,21 @@ jobs:
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x   # 构建 net48 的 SDK 风格项目已足够
-          cache: true             # 启用 NuGet 缓存，加速还原
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: MirrorAudio.csproj
 
       - name: Restore
         run: dotnet restore ./MirrorAudio.csproj --nologo
 
       - name: Build x64 (Release)
-        run: dotnet build ./MirrorAudio.csproj -c Release -p:PlatformTarget=x64 --no-restore --nologo
+        run: dotnet build ./MirrorAudio.csproj -c Release -p:PlatformTarget=x64 -p:GenerateRuntimeConfigurationFiles=true --no-restore --nologo
 
       - name: Package full output
         shell: pwsh
         run: |
           $outDir = Join-Path $pwd 'bin\Release\net48'
-          if (-not (Test-Path $outDir)) {
-            Write-Error "Output not found: $outDir"; exit 1
-          }
+          if (-not (Test-Path $outDir)) { Write-Error "Output not found: $outDir"; exit 1 }
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           Copy-Item "$outDir\*" artifacts -Recurse -Force
           Write-Host "Packed files:"; Get-ChildItem artifacts | % { Write-Host " - " $_.Name }
