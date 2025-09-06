@@ -13,15 +13,15 @@ using NAudio.Wave;
 namespace MirrorAudio
 {
     enum ShareModeOption { Auto, Exclusive, Shared }
-    enum SyncModeOption  { Auto, Event, Polling }
+    enum SyncModeOption { Auto, Event, Polling }
 
     sealed class AppSettings
     {
         public string InputDeviceId, MainDeviceId, AuxDeviceId;
         public ShareModeOption MainShare = ShareModeOption.Auto, AuxShare = ShareModeOption.Auto;
-        public SyncModeOption  MainSync  = SyncModeOption.Auto,  AuxSync  = SyncModeOption.Auto;
+        public SyncModeOption MainSync = SyncModeOption.Auto, AuxSync = SyncModeOption.Auto;
         public int MainRate = 192000, MainBits = 24, MainBufMs = 12;
-        public int AuxRate  = 48000,  AuxBits  = 16, AuxBufMs  = 120;
+        public int AuxRate = 48000, AuxBits = 16, AuxBufMs = 120;
         public bool AutoStart = false, EnableLogging = false;
     }
 
@@ -30,10 +30,10 @@ namespace MirrorAudio
         public bool Running;
         public string InputDevice, InputRole, InputFormat;
         public string MainDevice, MainMode, MainSync, MainFormat;
-        public string AuxDevice,  AuxMode,  AuxSync,  AuxFormat;
+        public string AuxDevice, AuxMode, AuxSync, AuxFormat;
         public int MainBufferMs, AuxBufferMs;
         public double MainDefaultPeriodMs, MainMinimumPeriodMs;
-        public double AuxDefaultPeriodMs,  AuxMinimumPeriodMs;
+        public double AuxDefaultPeriodMs, AuxMinimumPeriodMs;
     }
 
     static class Logger
@@ -47,7 +47,8 @@ namespace MirrorAudio
             {
                 File.AppendAllText(Path.Combine(Path.GetTempPath(), "MirrorAudio.log"),
                     DateTime.Now.ToString("HH:mm:ss.fff ") + s + Environment.NewLine, Encoding.UTF8);
-            } catch { }
+            }
+            catch { }
         }
     }
 
@@ -62,7 +63,7 @@ namespace MirrorAudio
         }
     }
 
-    // —— 音频图：Capture -> (Resample if needed) -> Main/Aux 两路输出 —— //
+    // —— 音频图 —— //
     sealed class AudioGraph : IDisposable
     {
         readonly AppSettings _cfg;
@@ -83,8 +84,8 @@ namespace MirrorAudio
 
         static WaveFormat MakeTarget(int rate, int bits, int channels)
         {
-            if (bits == 16) return new WaveFormat(rate, bits, channels); // PCM
-            return WaveFormat.CreateIeeeFloatWaveFormat(rate, channels); // float
+            if (bits == 16) return new WaveFormat(rate, bits, channels);
+            return WaveFormat.CreateIeeeFloatWaveFormat(rate, channels);
         }
 
         static IWaveProvider MaybeResample(IWaveProvider src, WaveFormat dst, int quality)
@@ -93,7 +94,7 @@ namespace MirrorAudio
                 src.WaveFormat.Channels == dst.Channels &&
                 (src.WaveFormat.BitsPerSample == dst.BitsPerSample || dst.Encoding == WaveFormatEncoding.IeeeFloat))
             {
-                return src; // 直通
+                return src;
             }
             var res = new MediaFoundationResampler(src, dst);
             res.ResamplerQuality = quality;
@@ -119,13 +120,13 @@ namespace MirrorAudio
         static AudioClientShareMode ResolveShare(ShareModeOption opt, bool preferExclusive)
         {
             if (opt == ShareModeOption.Exclusive) return AudioClientShareMode.Exclusive;
-            if (opt == ShareModeOption.Shared)   return AudioClientShareMode.Shared;
+            if (opt == ShareModeOption.Shared) return AudioClientShareMode.Shared;
             return preferExclusive ? AudioClientShareMode.Exclusive : AudioClientShareMode.Shared;
         }
 
         static bool ResolveEvent(SyncModeOption opt, bool preferEvent)
         {
-            if (opt == SyncModeOption.Event)   return true;
+            if (opt == SyncModeOption.Event) return true;
             if (opt == SyncModeOption.Polling) return false;
             return preferEvent;
         }
@@ -135,23 +136,17 @@ namespace MirrorAudio
                           out bool mainEvent, out bool auxEvent,
                           out int effMainBufMs, out int effAuxBufMs)
         {
-            // Capture
             _cap = CreateCapture(_inDev);
             _cap.DataAvailable += OnData;
-            _cap.RecordingStopped += (s, e) => Logger.Info("Capture stopped: " + (e?.Exception?.Message ?? "OK"));
             _cap.StartRecording();
 
-            _buf = new BufferedWaveProvider(_cap.WaveFormat);
-            _buf.DiscardOnBufferOverflow = true;
-
+            _buf = new BufferedWaveProvider(_cap.WaveFormat) { DiscardOnBufferOverflow = true };
             inFmt = DescribeFmt(_cap.WaveFormat);
 
-            // Main
             mainExclusive = _exclusiveMain = ResolveShare(_cfg.MainShare, true) == AudioClientShareMode.Exclusive;
             mainEvent = _eventMain = ResolveEvent(_cfg.MainSync, true);
             _mainBufMs = _cfg.MainBufMs;
 
-            // Aux
             auxExclusive = _exclusiveAux = ResolveShare(_cfg.AuxShare, false) == AudioClientShareMode.Exclusive;
             auxEvent = _eventAux = ResolveEvent(_cfg.AuxSync, true);
             _auxBufMs = _cfg.AuxBufMs;
@@ -159,11 +154,11 @@ namespace MirrorAudio
             var ch = Math.Max(1, Math.Min(_cap.WaveFormat.Channels, 2));
             _targetMain = _exclusiveMain ? MakeTarget(_cfg.MainRate, _cfg.MainBits, ch)
                                          : WaveFormat.CreateIeeeFloatWaveFormat(_cap.WaveFormat.SampleRate, ch);
-            _targetAux  = _exclusiveAux  ? MakeTarget(_cfg.AuxRate, _cfg.AuxBits, ch)
-                                         : WaveFormat.CreateIeeeFloatWaveFormat(_cap.WaveFormat.SampleRate, ch);
+            _targetAux = _exclusiveAux ? MakeTarget(_cfg.AuxRate, _cfg.AuxBits, ch)
+                                       : WaveFormat.CreateIeeeFloatWaveFormat(_cap.WaveFormat.SampleRate, ch);
 
             _toMain = MaybeResample(_buf, _targetMain, 50);
-            _toAux  = MaybeResample(_buf, _targetAux, 40);
+            _toAux = MaybeResample(_buf, _targetAux, 40);
 
             _outMain = new WasapiOut(_mainDev, _exclusiveMain ? AudioClientShareMode.Exclusive : AudioClientShareMode.Shared,
                                      _eventMain, _mainBufMs);
@@ -174,43 +169,37 @@ namespace MirrorAudio
             _outAux.Init(_toAux); _outAux.Play();
 
             mainFmt = DescribeFmt(_targetMain);
-            auxFmt  = DescribeFmt(_targetAux);
+            auxFmt = DescribeFmt(_targetAux);
             effMainBufMs = _mainBufMs;
-            effAuxBufMs  = _auxBufMs;
+            effAuxBufMs = _auxBufMs;
         }
 
-        void OnData(object s, WaveInEventArgs e)
-        {
-            if (e.BytesRecorded > 0) _buf.AddSamples(e.Buffer, 0, e.BytesRecorded);
-        }
+        void OnData(object s, WaveInEventArgs e) => _buf.AddSamples(e.Buffer, 0, e.BytesRecorded);
 
         public void StopSafe()
         {
             try { _outMain?.Stop(); } catch { }
-            try { _outAux?.Stop();  } catch { }
+            try { _outAux?.Stop(); } catch { }
             try { _cap?.StopRecording(); } catch { }
-
             Dispose();
         }
 
         public void Dispose()
         {
             try { _outMain?.Dispose(); } catch { }
-            try { _outAux?.Dispose();  } catch { }
-            try { _cap?.Dispose();     } catch { }
+            try { _outAux?.Dispose(); } catch { }
+            try { _cap?.Dispose(); } catch { }
             _outMain = null; _outAux = null; _cap = null; _buf = null;
         }
 
         static string DescribeFmt(WaveFormat f)
         {
             if (f == null) return "-";
-            var bits = f.BitsPerSample;
-            var enc = f.Encoding == WaveFormatEncoding.IeeeFloat ? "float" : (bits + "bit");
-            return f.SampleRate + " Hz, " + enc + ", " + f.Channels + "ch";
+            var enc = f.Encoding == WaveFormatEncoding.IeeeFloat ? "float" : (f.BitsPerSample + "bit");
+            return $"{f.SampleRate} Hz, {enc}, {f.Channels}ch";
         }
     }
 
-    // —— 托盘与设置 —— //
     sealed class TrayApp : Form, IMMNotificationClient
     {
         readonly NotifyIcon _tray = new NotifyIcon();
@@ -218,20 +207,16 @@ namespace MirrorAudio
         readonly MMDeviceEnumerator _mm = new MMDeviceEnumerator();
         readonly System.Windows.Forms.Timer _debounce = new System.Windows.Forms.Timer() { Interval = 300 };
         AppSettings _cfg = new AppSettings();
-
         AudioGraph _graph;
         bool _running, _mainIsExclusive, _mainEventSyncUsed, _auxIsExclusive, _auxEventSyncUsed;
         int _mainBufEffectiveMs, _auxBufEffectiveMs;
         string _inRoleStr = "-", _inFmtStr = "-", _inDevName = "-", _mainFmtStr = "-", _auxFmtStr = "-";
         double _defMainMs = 10, _minMainMs = 2, _defAuxMs = 10, _minAuxMs = 2;
-
         readonly Dictionary<string, Tuple<double, double>> _periodCache = new Dictionary<string, Tuple<double, double>>(4);
 
         public TrayApp()
         {
-            Logger.Enabled = _cfg.EnableLogging;
             try { _mm.RegisterEndpointNotificationCallback(this); } catch { }
-
             try
             {
                 string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "MirrorAudio.ico");
@@ -240,28 +225,15 @@ namespace MirrorAudio
             catch { _tray.Icon = SystemIcons.Application; }
             _tray.Visible = true; _tray.Text = "MirrorAudio";
 
-            var miStart = new ToolStripMenuItem("启动/重启(&S)", null, (s, e) => StartOrRestart());
-            var miStop  = new ToolStripMenuItem("停止(&T)",     null, (s, e) => Stop());
-            var miSet   = new ToolStripMenuItem("设置(&G)...",  null, (s, e) => OnSettings());
-            var miLog   = new ToolStripMenuItem("打开日志目录",   null, (s, e) => Process.Start("explorer.exe", Path.GetTempPath()));
-            var miExit  = new ToolStripMenuItem("退出(&X)",     null, (s, e) => { Stop(); Application.Exit(); });
-            _menu.Items.AddRange(new ToolStripItem[] { miStart, miStop, new ToolStripSeparator(), miSet, miLog, new ToolStripSeparator(), miExit });
+            var miStart = new ToolStripMenuItem("启动/重启", null, (s, e) => StartOrRestart());
+            var miStop = new ToolStripMenuItem("停止", null, (s, e) => Stop());
+            var miSet = new ToolStripMenuItem("设置...", null, (s, e) => OnSettings());
+            var miExit = new ToolStripMenuItem("退出", null, (s, e) => { Stop(); Application.Exit(); });
+            _menu.Items.AddRange(new ToolStripItem[] { miStart, miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
             _debounce.Tick += (s, e) => { _debounce.Stop(); StartOrRestart(); };
-
-            EnsureAutoStart(_cfg.AutoStart);
             StartOrRestart();
-        }
-
-        void EnsureAutoStart(bool on)
-        {
-            try
-            {
-                var rk = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
-                if (on) rk.SetValue("MirrorAudio", Application.ExecutablePath);
-                else rk.DeleteValue("MirrorAudio", false);
-            } catch { }
         }
 
         void OnSettings()
@@ -271,8 +243,6 @@ namespace MirrorAudio
                 if (f.ShowDialog(this) == DialogResult.OK)
                 {
                     _cfg = f.Result;
-                    Logger.Enabled = _cfg.EnableLogging;
-                    EnsureAutoStart(_cfg.AutoStart);
                     StartOrRestart();
                 }
             }
@@ -281,153 +251,119 @@ namespace MirrorAudio
         void StartOrRestart()
         {
             Stop();
-
             try
             {
-                var inDev   = !string.IsNullOrEmpty(_cfg.InputDeviceId) ? _mm.GetDevice(_cfg.InputDeviceId) : GetDefaultInput();
+                var inDev = !string.IsNullOrEmpty(_cfg.InputDeviceId) ? _mm.GetDevice(_cfg.InputDeviceId) : _mm.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia);
                 var mainDev = _mm.GetDevice(_cfg.MainDeviceId ?? _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia).ID);
-                var auxDev  = _mm.GetDevice(_cfg.AuxDeviceId  ?? _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Console).ID);
+                var auxDev = _mm.GetDevice(_cfg.AuxDeviceId ?? _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Console).ID);
 
                 _inDevName = inDev.FriendlyName;
                 _inRoleStr = inDev.DataFlow == DataFlow.Render ? "环回" : "录音";
 
                 _graph = new AudioGraph(_cfg, inDev, mainDev, auxDev);
-                string inFmt, mainFmt, auxFmt;
-                _graph.Start(out inFmt, out mainFmt, out auxFmt,
+                _graph.Start(out _inFmtStr, out _mainFmtStr, out _auxFmtStr,
                              out _mainIsExclusive, out _auxIsExclusive,
                              out _mainEventSyncUsed, out _auxEventSyncUsed,
                              out _mainBufEffectiveMs, out _auxBufEffectiveMs);
-                _inFmtStr = inFmt; _mainFmtStr = mainFmt; _auxFmtStr = auxFmt;
 
                 var pm = GetPeriods(mainDev.ID);
                 _defMainMs = pm.Item1; _minMainMs = pm.Item2;
                 pm = GetPeriods(auxDev.ID);
                 _defAuxMs = pm.Item1; _minAuxMs = pm.Item2;
-
                 _running = true;
-                Logger.Info("Started.");
             }
-            catch (Exception ex)
-            {
-                _running = false;
-                Logger.Info("Start failed: " + ex.Message);
-                MessageBox.Show("启动失败：\n" + ex.Message, "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Stop();
-            }
+            catch { _running = false; Stop(); }
         }
 
         void Stop()
         {
             _running = false;
-            if (_graph != null) { _graph.StopSafe(); _graph = null; }
+            _graph?.StopSafe();
+            _graph = null;
         }
 
-        StatusSnapshot GetStatusSnapshot()
+        StatusSnapshot GetStatusSnapshot() => new StatusSnapshot
         {
-            var s = new StatusSnapshot();
-            s.Running = _running;
-            s.InputDevice = _inDevName;
-            s.InputRole   = _inRoleStr;
-            s.InputFormat = _inFmtStr;
+            Running = _running,
+            InputDevice = _inDevName,
+            InputRole = _inRoleStr,
+            InputFormat = _inFmtStr,
+            MainDevice = SafeName(_cfg.MainDeviceId),
+            MainMode = _mainIsExclusive ? "独占" : "共享",
+            MainSync = _mainEventSyncUsed ? "事件" : "轮询",
+            MainFormat = _mainFmtStr,
+            MainBufferMs = _mainBufEffectiveMs,
+            MainDefaultPeriodMs = _defMainMs,
+            MainMinimumPeriodMs = _minMainMs,
+            AuxDevice = SafeName(_cfg.AuxDeviceId),
+            AuxMode = _auxIsExclusive ? "独占" : "共享",
+            AuxSync = _auxEventSyncUsed ? "事件" : "轮询",
+            AuxFormat = _auxFmtStr,
+            AuxBufferMs = _auxBufEffectiveMs,
+            AuxDefaultPeriodMs = _defAuxMs,
+            AuxMinimumPeriodMs = _minAuxMs
+        };
 
-            s.MainDevice = DescribeDevice(_cfg.MainDeviceId);
-            s.MainMode   = _mainIsExclusive ? "独占" : "共享";
-            s.MainSync   = _mainEventSyncUsed ? "事件" : "轮询";
-            s.MainFormat = _mainFmtStr;
-            s.MainBufferMs = _mainBufEffectiveMs;
-            s.MainDefaultPeriodMs = _defMainMs;
-            s.MainMinimumPeriodMs = _minMainMs;
-
-            s.AuxDevice = DescribeDevice(_cfg.AuxDeviceId);
-            s.AuxMode   = _auxIsExclusive ? "独占" : "共享";
-            s.AuxSync   = _auxEventSyncUsed ? "事件" : "轮询";
-            s.AuxFormat = _auxFmtStr;
-            s.AuxBufferMs = _auxBufEffectiveMs;
-            s.AuxDefaultPeriodMs = _defAuxMs;
-            s.AuxMinimumPeriodMs = _minAuxMs;
-            return s;
-        }
-
-        string DescribeDevice(string id)
+        string SafeName(string id)
         {
-            try { if (!string.IsNullOrEmpty(id)) return _mm.GetDevice(id).FriendlyName; } catch { }
-            return "-";
+            try { return string.IsNullOrEmpty(id) ? "-" : _mm.GetDevice(id).FriendlyName; }
+            catch { return "-"; }
         }
 
-        MMDevice GetDefaultInput()
-        {
-            try { return _mm.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications); } catch { }
-            try { return _mm.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia); } catch { }
-            return _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-        }
-
-        // —— 设备周期：新版属性 + 兜底 —— //
+        // —— 周期兼容 —— //
         Tuple<double, double> GetPeriods(string devId)
-{
-    Tuple<double, double> t;
-    if (_periodCache.TryGetValue(devId ?? "", out t)) return t;
-
-    double defMs = 10, minMs = 2; // 兜底
-    try
-    {
-        var dev = _mm.GetDevice(devId);
-        var ac  = dev.AudioClient;
-
-        // 先用属性（不同 NAudio 版本可能返回 TimeSpan 或 long）
-        try
         {
-            var tp = ac.GetType();
-            var defProp = tp.GetProperty("DefaultDevicePeriod");
-            var minProp = tp.GetProperty("MinimumDevicePeriod");
-            if (defProp != null && minProp != null)
-            {
-                object defVal = defProp.GetValue(ac, null);
-                object minVal = minProp.GetValue(ac, null);
-                defMs = ToMs(defVal);
-                minMs = ToMs(minVal);
-            }
-            else
-            {
-                // 没有属性就走方法反射（旧版）
-                var m = tp.GetMethod("GetDevicePeriod");
-                if (m != null)
-                {
-                    object[] args = new object[] { 0L, 0L };
-                    m.Invoke(ac, args);
-                    defMs = ((long)args[0]) / 10000.0; // 100ns -> ms
-                    minMs = ((long)args[1]) / 10000.0;
-                }
-            }
-        }
-        catch
-        {
-            // 属性读取异常时，尝试方法；失败保持兜底
+            if (_periodCache.TryGetValue(devId ?? "", out var t)) return t;
+            double defMs = 10, minMs = 2;
             try
             {
-                var m = ac.GetType().GetMethod("GetDevicePeriod");
-                if (m != null)
+                var dev = _mm.GetDevice(devId);
+                var ac = dev.AudioClient;
+                var tp = ac.GetType();
+                var defProp = tp.GetProperty("DefaultDevicePeriod");
+                var minProp = tp.GetProperty("MinimumDevicePeriod");
+                if (defProp != null && minProp != null)
                 {
-                    object[] args = new object[] { 0L, 0L };
-                    m.Invoke(ac, args);
-                    defMs = ((long)args[0]) / 10000.0;
-                    minMs = ((long)args[1]) / 10000.0;
+                    defMs = ToMs(defProp.GetValue(ac));
+                    minMs = ToMs(minProp.GetValue(ac));
                 }
-            } catch { }
+                else
+                {
+                    var m = tp.GetMethod("GetDevicePeriod");
+                    if (m != null)
+                    {
+                        object[] args = new object[] { 0L, 0L };
+                        m.Invoke(ac, args);
+                        defMs = ((long)args[0]) / 10000.0;
+                        minMs = ((long)args[1]) / 10000.0;
+                    }
+                }
+            }
+            catch { }
+            t = Tuple.Create(defMs, minMs);
+            _periodCache[devId ?? ""] = t;
+            return t;
+        }
+
+        static double ToMs(object v)
+        {
+            if (v == null) return 0;
+            if (v is TimeSpan ts) return ts.TotalMilliseconds;
+            if (v is long l) return l / 10000.0;
+            try { return Convert.ToInt64(v) / 10000.0; } catch { return 0; }
+        }
+
+        // IMMNotificationClient
+        public void OnDeviceStateChanged(string deviceId, DeviceState newState) { _debounce.Stop(); _debounce.Start(); }
+        public void OnDeviceAdded(string pwstrDeviceId) { _debounce.Stop(); _debounce.Start(); }
+        public void OnDeviceRemoved(string deviceId) { _debounce.Stop(); _debounce.Start(); }
+        public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId) { _debounce.Stop(); _debounce.Start(); }
+        public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key) { }
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            try { _mm.UnregisterEndpointNotificationCallback(this); } catch { }
+            Stop();
+            base.OnFormClosed(e);
         }
     }
-    catch { /* 保持 10/2 ms */ }
-
-    t = Tuple.Create(defMs, minMs);
-    _periodCache[devId ?? ""] = t;
-    return t;
-}
-
-// 把任意返回（TimeSpan 或 long/其它可转 long）统一换算为毫秒
-static double ToMs(object v)
-{
-    if (v == null) return 0;
-    var ts = v as TimeSpan?;
-    if (ts.HasValue) return ts.Value.TotalMilliseconds;
-    if (v is long l) return l / 10000.0;  // 100ns -> ms
-    try { return Convert.ToInt64(v) / 10000.0; } catch { return 0; }
 }
