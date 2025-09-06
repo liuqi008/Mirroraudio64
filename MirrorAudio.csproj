@@ -1,26 +1,17 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net48</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <Platforms>x64</Platforms>
-    <PlatformTarget>x64</PlatformTarget>
-    <Nullable>disable</Nullable>
-    <LangVersion>7.3</LangVersion>
-    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Prefer32Bit>false</Prefer32Bit>
-    <!-- 若仓库中已存在该文件，设置应用程序图标 -->
-    <ApplicationIcon>Assets\MirrorAudio.ico</ApplicationIcon>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ApplicationIcon>MirrorAudio.ico</ApplicationIcon>
+    <AssemblyName>MirrorAudio</AssemblyName>
+    <RootNamespace>MirrorAudio</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
-
   <ItemGroup>
+    <None Include="MirrorAudio.ico" />
+    <None Include="app.manifest" />
     <PackageReference Include="NAudio" Version="2.2.1" />
-  </ItemGroup>
-
-  <!-- 确保图标随构建产物一起输出（托盘图标也可直接读取该文件） -->
-  <ItemGroup>
-    <Content Include="Assets\MirrorAudio.ico">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
 </Project>
