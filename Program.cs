@@ -25,7 +25,7 @@ namespace MirrorAudio
             AppDomain.CurrentDomain.UnhandledException += (s, e) => Logger.Log("unhandled: " + e.ExceptionObject);
             Application.ThreadException += (s, e) => Logger.Log("ui-ex: " + e.Exception);
 
-            Application.Run(new TrayContext()); // 纯托盘，无窗体白屏
+            Application.Run(new TrayContext()); // 纯托盘，无白窗
         }
     }
 
@@ -150,7 +150,7 @@ namespace MirrorAudio
                 _cap = isLoopback ? (WasapiCapture) new WasapiLoopbackCapture(capDev) : new WasapiCapture(capDev);
                 _cap.ShareMode = AudioClientShareMode.Shared;
                 _cap.DataAvailable += OnData;
-                _cap.RecordingStopped += (s,e)=> Logger.Log("capture stopped: "+e.Exception);
+                _cap.RecordingStopped += (s,e)=> Logger.Log("capture stopped" + (e!=null && e.Exception!=null ? (": "+e.Exception.Message) : " (device reset or stop)"));
                 var inFmt = _cap.WaveFormat;
                 _inRoleStr = isLoopback? "环回":"录音";
                 _inFmtStr  = Fmt(inFmt);
@@ -169,7 +169,7 @@ namespace MirrorAudio
                 _bufAux  = new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true,
                     BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs*4, 120)) };
 
-                // 主/副：统一初始化（独占直通优先；失败回退共享直通→共享重采样）
+                // 主/副：共用同一初始化策略（独占直通优先；失败回退共享直通→共享重采样）
                 bool triedMainEx=false, triedAuxEx=false;
 
                 InitPath(
@@ -181,8 +181,7 @@ namespace MirrorAudio
                     resRef: ref _resMain, outRef: ref _mainOut,
                     isExclusive: out _mainIsExclusive, usedEvent: out _mainEventSyncUsed,
                     effMs: out _mainBufEffectiveMs, fmtStr: out _mainFmtStr, path: out _mainPath,
-                    auxResamplerQuality: 50,
-                    preferExclusiveDefault:true,
+                    auxResamplerQuality: 50, preferExclusiveDefault:true,
                     exclusiveAttempted: out triedMainEx
                 );
 
@@ -196,8 +195,7 @@ namespace MirrorAudio
                     isExclusive: out _auxIsExclusive, usedEvent: out _auxEventSyncUsed,
                     effMs: out _auxBufEffectiveMs, fmtStr: out _auxFmtStr, path: out _auxPath,
                     auxResamplerQuality: Clamp(_cfg.AuxResamplerQuality,30,50),
-                    preferExclusiveDefault:true, // Auto 也先试独占
-                    exclusiveAttempted: out triedAuxEx
+                    preferExclusiveDefault:true, exclusiveAttempted: out triedAuxEx
                 );
 
                 // 起播
@@ -205,7 +203,7 @@ namespace MirrorAudio
                 if (_mainOut!=null) _mainOut.Play();
                 if (_auxOut !=null) _auxOut.Play();
 
-                // 回退提示（仅当尝试过独占但失败）
+                // 回退提示
                 MaybeNotifyFallback("主通道", _cfg.MainShare, triedMainEx, _mainIsExclusive, _mainPath);
                 MaybeNotifyFallback("副通道", _cfg.AuxShare,  triedAuxEx,  _auxIsExclusive,  _auxPath);
             }
@@ -255,8 +253,7 @@ namespace MirrorAudio
                 for (int i=0;i<candidates.Count;i++)
                 {
                     var fmt = candidates[i];
-                    bool ok = SupportsExclusive(dev, fmt);
-                    if (!ok)
+                    if (!SupportsExclusive(dev, fmt))
                     {
                         if (Logger.Enabled) Logger.Log(which + " exclusive reject: " + Fmt(fmt));
                         continue;
@@ -270,16 +267,29 @@ namespace MirrorAudio
                         src = resRef;
                     }
 
-                    var wo = CreateOut(dev, AudioClientShareMode.Exclusive, cfgSync, ms, src, out usedEvent, fmt);
-                    if (wo != null)
+                    // 先试 Event，再强制 Polling
+                    bool usedEventTry;
+                    var wo = CreateOut(dev, AudioClientShareMode.Exclusive, cfgSync, ms, src, out usedEventTry, fmt);
+                    if (wo == null)
                     {
-                        outRef = wo; isExclusive=true; effMs=ms; fmtStr=Fmt(fmt);
+                        var woPoll = CreateOutForcePolling(dev, AudioClientShareMode.Exclusive, ms, src, fmt);
+                        if (woPoll != null)
+                        {
+                            outRef = woPoll; isExclusive = true; usedEvent = false; effMs = ms; fmtStr = Fmt(fmt);
+                            path = Eq(buf.WaveFormat, fmt) ? PathType.PassthroughExclusive : PathType.ResampledExclusive;
+                            if (Logger.Enabled) Logger.Log(which + " exclusive OK(Polling): " + Fmt(fmt) + " , polling, " + ms + "ms");
+                            return;
+                        }
+                        DisposeSafe(ref resRef);
+                        if (Logger.Enabled) Logger.Log(which + " exclusive init-fail (Event+Polling): " + Fmt(fmt));
+                    }
+                    else
+                    {
+                        outRef = wo; isExclusive = true; usedEvent = usedEventTry; effMs = ms; fmtStr = Fmt(fmt);
                         path = Eq(buf.WaveFormat, fmt) ? PathType.PassthroughExclusive : PathType.ResampledExclusive;
                         if (Logger.Enabled) Logger.Log(which + " exclusive OK: " + Fmt(fmt) + " , " + (usedEvent?"event":"polling") + ", " + ms + "ms");
                         return;
                     }
-                    DisposeSafe(ref resRef);
-                    if (Logger.Enabled) Logger.Log(which + " exclusive init-fail: " + Fmt(fmt));
                 }
             }
 
@@ -308,36 +318,43 @@ namespace MirrorAudio
 
         List<WaveFormat> BuildExclusiveCandidates(WaveFormat inFmt, int userRate, int userBits)
         {
-            var list = new List<WaveFormat>(12);
-            // 1) 输入直通
-            list.Add(inFmt);
+            var list = new List<WaveFormat>(24);
 
-            // 2) 同采样率三件套：32f、24-bit packed、32-bit PCM（很多 SPDIF/HDMI 用 32 容器承载 24 有效位）
-            if (inFmt.SampleRate>0 && inFmt.Channels>0)
+            // 0) 输入直通（最优先）
+            if (inFmt != null) list.Add(inFmt);
+
+            // 一个本地小工具：同采样率四件套（32f/24packed/32pcm/16pcm）
+            Func<int,int,WaveFormat[]> Trio = (rate, ch) =>
             {
-                var f32f   = WaveFormat.CreateIeeeFloatWaveFormat(inFmt.SampleRate, inFmt.Channels);
-                var f24    = Pcm24(inFmt.SampleRate, inFmt.Channels);
-                var f32pcm = Pcm32(inFmt.SampleRate, inFmt.Channels);
-                if (!Eq(f32f,   inFmt)) list.Add(f32f);
-                if (!Eq(f24,    inFmt)) list.Add(f24);
-                if (!Eq(f32pcm, inFmt)) list.Add(f32pcm);
+                return new[]
+                {
+                    WaveFormat.CreateIeeeFloatWaveFormat(rate, ch), // 32f
+                    Pcm24(rate, ch),                                // 24bit packed
+                    Pcm32(rate, ch),                                // 32bit pcm (24 有效位常见)
+                    new WaveFormat(rate, 16, ch)                    // 16bit pcm（对很多 SPDIF/HDMI 是关键）
+                };
+            };
+
+            // 1) 同采样率四件套
+            if (inFmt != null && inFmt.SampleRate > 0 && inFmt.Channels > 0)
+            {
+                foreach (var f in Trio(inFmt.SampleRate, inFmt.Channels))
+                    if (!Eq(f, inFmt) && !list.Any(x => Eq(x, f))) list.Add(f);
             }
 
-            // 3) 用户设定（仅独占生效）
-            var user = WaveFormatFromUser(userRate, userBits, inFmt.Channels, false);
+            // 2) 用户设定（仅独占有效）
+            var user = WaveFormatFromUser(userRate, userBits, (inFmt!=null?inFmt.Channels:2), false);
             if (user != null && !list.Any(f=>Eq(f,user))) list.Add(user);
 
-            // 4) 常见采样率（每个三件套）。48/96 优先，再 192/44.1
-            for (int i=0;i<CommonRates.Length;i++)
+            // 3) 常见采样率（48/96 优先，再 192/44.1），每个四件套
+            for (int i = 0; i < CommonRates.Length; i++)
             {
-                int r = CommonRates[i]; if (r==inFmt.SampleRate) continue;
-                var f24    = Pcm24(r, inFmt.Channels);
-                var f32pcm = Pcm32(r, inFmt.Channels);
-                var f32f   = WaveFormat.CreateIeeeFloatWaveFormat(r, inFmt.Channels);
-                if (!list.Any(f=>Eq(f,f24)))    list.Add(f24);
-                if (!list.Any(f=>Eq(f,f32pcm))) list.Add(f32pcm);
-                if (!list.Any(f=>Eq(f,f32f)))   list.Add(f32f);
+                int r = CommonRates[i];
+                if (inFmt != null && r == inFmt.SampleRate) continue;
+                foreach (var f in Trio(r, inFmt != null ? inFmt.Channels : 2))
+                    if (!list.Any(x => Eq(x, f))) list.Add(f);
             }
+
             return list;
         }
 
@@ -368,6 +385,20 @@ namespace MirrorAudio
                 return wo;
             }
             catch (Exception ex) { Logger.Log("CreateOut: "+ex.Message); return null; }
+        }
+
+        // 强制轮询（Polling）再试一次独占
+        WasapiOut CreateOutForcePolling(MMDevice dev, AudioClientShareMode mode, int ms, IWaveProvider src, WaveFormat forceFormat)
+        {
+            try
+            {
+                var wo = new WasapiOut(dev, mode, /*useEvent*/ false, ms);
+                if (forceFormat!=null && !Eq(src.WaveFormat, forceFormat))
+                    src = new MediaFoundationResampler(src, forceFormat){ ResamplerQuality = 50 };
+                wo.Init(src);
+                return wo;
+            }
+            catch (Exception ex) { Logger.Log("CreateOut(Polling): " + ex.Message); return null; }
         }
 
         static bool PreferEvent() { return true; }
@@ -501,7 +532,7 @@ namespace MirrorAudio
             string desc = (path==PathType.PassthroughSharedMix) ? "共享直通"
                        : (path==PathType.ResampledShared)       ? "共享重采样"
                        : "共享";
-            TrayTip($"{which}未能独占，已回退为「{desc}」。可尝试同采样率的 32-bit PCM 或 32f。");
+            TrayTip($"{which}未能独占，已回退为「{desc}」。可尝试同采样率的 16/24bit 或 32f/32pcm。");
             Logger.Log($"{which} exclusive fallback -> {desc}");
         }
 
@@ -517,7 +548,7 @@ namespace MirrorAudio
         public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId) { DebouncedRestart(); }
         public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key) { }
 
-        // 统一的去抖重启
+        // 统一去抖重启
         void DebouncedRestart(){ _debounce.Stop(); _debounce.Start(); }
 
         // 自启动
