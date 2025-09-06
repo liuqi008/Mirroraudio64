@@ -68,10 +68,7 @@ namespace MirrorAudio
     {
         static readonly string Dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"MirrorAudio");
         static readonly string FilePath=Path.Combine(Dir,"settings.json");
-
-        static readonly System.Buffers.ArrayPool<byte> _bytePool = System.Buffers.ArrayPool<byte>.Shared;
-    
-        public static AppSettings Load(){ try{ if(!File.Exists(FilePath)) return new AppSettings(); using(var fs=File.OpenRead(FilePath)) return (AppSettings)new DataContractJsonSerializer(typeof(AppSettings)).ReadObject(fs);}catch{ return new AppSettings(); }}
+public static AppSettings Load(){ try{ if(!File.Exists(FilePath)) return new AppSettings(); using(var fs=File.OpenRead(FilePath)) return (AppSettings)new DataContractJsonSerializer(typeof(AppSettings)).ReadObject(fs);}catch{ return new AppSettings(); }}
         public static void Save(AppSettings s){ try{ if(!Directory.Exists(Dir)) Directory.CreateDirectory(Dir); using(var fs=File.Create(FilePath)) new DataContractJsonSerializer(typeof(AppSettings)).WriteObject(fs,s);}catch{} }
     }
 
