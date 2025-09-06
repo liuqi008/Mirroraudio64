@@ -25,7 +25,7 @@ namespace MirrorAudio
             AppDomain.CurrentDomain.UnhandledException += (s, e) => Logger.Log("unhandled: " + e.ExceptionObject);
             Application.ThreadException += (s, e) => Logger.Log("ui-ex: " + e.Exception);
 
-            Application.Run(new TrayContext()); // 纯托盘，无白窗
+            Application.Run(new TrayContext()); // 无白窗，纯托盘
         }
     }
 
@@ -47,9 +47,13 @@ namespace MirrorAudio
         public ShareModeOption MainShare = ShareModeOption.Auto, AuxShare = ShareModeOption.Auto;
         public SyncModeOption  MainSync  = SyncModeOption.Auto,  AuxSync  = SyncModeOption.Auto;
         public int MainRate = 192000, MainBits = 24, MainBufMs = 12;
-        public int AuxRate  =  48000, AuxBits  = 16, AuxBufMs  = 160;
+        public int AuxRate  =  44100, AuxBits  = 16, AuxBufMs  = 150;
         public bool AutoStart = false, EnableLogging = false;
         public int AuxResamplerQuality = 40; // 30/40/50
+
+        // 新增开关
+        public bool ForceUserFormat = false;        // 强制用右侧格式（仅独占）
+        public bool ForcePassthroughStrict = false; // 强制直通（不可直通则不播放）
     }
 
     public sealed class StatusSnapshot
@@ -74,7 +78,12 @@ namespace MirrorAudio
         readonly MMDeviceEnumerator _mm = new MMDeviceEnumerator();
 
         AppSettings _cfg = ConfigStore.Load();
+
+        // 设备周期/偏好缓存
         readonly Dictionary<string, Tuple<double,double>> _periodCache = new Dictionary<string, Tuple<double,double>>(8);
+        readonly Dictionary<string, bool> _preferPolling = new Dictionary<string, bool>(4);
+        readonly Dictionary<string, WaveFormat> _lastGoodExclusive = new Dictionary<string, WaveFormat>(4);
+
         static readonly int[] CommonRates = new[] { 48000, 96000, 192000, 44100 };
 
         // 输入
@@ -150,7 +159,7 @@ namespace MirrorAudio
                 _cap = isLoopback ? (WasapiCapture) new WasapiLoopbackCapture(capDev) : new WasapiCapture(capDev);
                 _cap.ShareMode = AudioClientShareMode.Shared;
                 _cap.DataAvailable += OnData;
-                _cap.RecordingStopped += (s,e)=> Logger.Log("capture stopped" + (e!=null && e.Exception!=null ? (": "+e.Exception.Message) : " (device reset or stop)"));
+                _cap.RecordingStopped += (s,e)=> { if (e!=null && e.Exception!=null) Logger.Log("capture stopped: "+e.Exception.Message); };
                 var inFmt = _cap.WaveFormat;
                 _inRoleStr = isLoopback? "环回":"录音";
                 _inFmtStr  = Fmt(inFmt);
@@ -169,7 +178,7 @@ namespace MirrorAudio
                 _bufAux  = new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true,
                     BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs*4, 120)) };
 
-                // 主/副：共用同一初始化策略（独占直通优先；失败回退共享直通→共享重采样）
+                // 主/副初始化（设置优先 + 可强制 + 智能回退）
                 bool triedMainEx=false, triedAuxEx=false;
 
                 InitPath(
@@ -203,7 +212,6 @@ namespace MirrorAudio
                 if (_mainOut!=null) _mainOut.Play();
                 if (_auxOut !=null) _auxOut.Play();
 
-                // 回退提示
                 MaybeNotifyFallback("主通道", _cfg.MainShare, triedMainEx, _mainIsExclusive, _mainPath);
                 MaybeNotifyFallback("副通道", _cfg.AuxShare,  triedAuxEx,  _auxIsExclusive,  _auxPath);
             }
@@ -227,7 +235,7 @@ namespace MirrorAudio
             _mainPath = PathType.None; _auxPath = PathType.None;
         }
 
-        // ---------- 合并后的通用初始化 ----------
+        // ---------- 初始化（核心） ----------
         void InitPath(
             string which,
             ShareModeOption cfgShare, SyncModeOption cfgSync,
@@ -241,12 +249,104 @@ namespace MirrorAudio
             isExclusive=false; usedEvent=false; effMs=0; fmtStr="-"; path=PathType.None; exclusiveAttempted=false;
             if (dev==null || inFmt==null || buf==null) return;
 
-            // 只要不是“明确选共享”，Auto/Exclusive 都先尝试独占
             bool wantExclusive = (cfgShare != ShareModeOption.Shared) &&
                                  ((cfgShare==ShareModeOption.Exclusive) || (cfgShare==ShareModeOption.Auto && preferExclusiveDefault));
 
-            var candidates = BuildExclusiveCandidates(inFmt, userRate, userBits);
+            // ---- 速通：记忆的上次成功格式（独占）----
+            if (wantExclusive)
+            {
+                WaveFormat lastFmt;
+                if (_lastGoodExclusive.TryGetValue(dev.ID, out lastFmt) && lastFmt != null && SupportsExclusive(dev, lastFmt))
+                {
+                    int ms = Buf(wantMs, true, defMs, minMs);
+                    IWaveProvider src = buf;
+                    if (!Eq(buf.WaveFormat, lastFmt))
+                    {
+                        if (_cfg.ForcePassthroughStrict) { Logger.Log(which+" strict: skip lastFmt not passthrough "+Fmt(lastFmt)); }
+                        else { resRef = new MediaFoundationResampler(buf, lastFmt){ ResamplerQuality = auxResamplerQuality }; src = resRef; }
+                    }
 
+                    bool usedEventTry;
+                    var wo = CreateOut(dev, AudioClientShareMode.Exclusive, cfgSync, ms, src, out usedEventTry, lastFmt);
+                    if (wo == null)
+                    {
+                        var woPoll = CreateOutForcePolling(dev, AudioClientShareMode.Exclusive, ms, src, lastFmt);
+                        if (woPoll != null)
+                        {
+                            outRef = woPoll; isExclusive=true; usedEvent=false; effMs=ms; fmtStr=Fmt(lastFmt);
+                            path = Eq(buf.WaveFormat, lastFmt) ? PathType.PassthroughExclusive : PathType.ResampledExclusive;
+                            _preferPolling[dev.ID] = true; _lastGoodExclusive[dev.ID] = lastFmt;
+                            if (Logger.Enabled) Logger.Log(which + " exclusive OK(Polling-fast): " + Fmt(lastFmt) + " , polling, " + ms + "ms");
+                            return;
+                        }
+                        DisposeSafe(ref resRef);
+                    }
+                    else
+                    {
+                        outRef = wo; isExclusive = true; usedEvent = usedEventTry; effMs = ms; fmtStr = Fmt(lastFmt);
+                        path = Eq(buf.WaveFormat, lastFmt) ? PathType.PassthroughExclusive : PathType.ResampledExclusive;
+                        _preferPolling[dev.ID] = !usedEventTry; _lastGoodExclusive[dev.ID] = lastFmt;
+                        if (Logger.Enabled) Logger.Log(which + " exclusive OK(fast): " + Fmt(lastFmt) + " , " + (usedEvent?"event":"polling") + ", " + ms + "ms");
+                        return;
+                    }
+                }
+            }
+
+            // ---- A) 强制使用右侧格式（仅独占）----
+            bool strictUser = _cfg.ForceUserFormat && wantExclusive;
+            if (strictUser)
+            {
+                exclusiveAttempted = true;
+                var userOnly = BuildUserAnchoredCandidates(userRate, userBits, inFmt.Channels);
+                for (int i=0;i<userOnly.Count;i++)
+                {
+                    var fmt = userOnly[i];
+                    if (!SupportsExclusive(dev, fmt)) { if(Logger.Enabled) Logger.Log(which+" exclusive reject(user): "+Fmt(fmt)); continue; }
+
+                    int ms = Buf(wantMs, true, defMs, minMs);
+                    IWaveProvider src = buf;
+                    if (!Eq(buf.WaveFormat, fmt))
+                    {
+                        if (_cfg.ForcePassthroughStrict) { if(Logger.Enabled) Logger.Log(which+" strict skip(non-pass,user): "+Fmt(fmt)); continue; }
+                        resRef = new MediaFoundationResampler(buf, fmt){ ResamplerQuality = auxResamplerQuality };
+                        src = resRef;
+                    }
+
+                    bool usedEventTry;
+                    var wo = CreateOut(dev, AudioClientShareMode.Exclusive, cfgSync, ms, src, out usedEventTry, fmt);
+                    if (wo == null)
+                    {
+                        var woPoll = CreateOutForcePolling(dev, AudioClientShareMode.Exclusive, ms, src, fmt);
+                        if (woPoll != null)
+                        {
+                            outRef = woPoll; isExclusive=true; usedEvent=false; effMs=ms; fmtStr=Fmt(fmt);
+                            path = Eq(buf.WaveFormat, fmt) ? PathType.PassthroughExclusive : PathType.ResampledExclusive;
+                            _preferPolling[dev.ID] = true; _lastGoodExclusive[dev.ID] = fmt;
+                            if (Logger.Enabled) Logger.Log(which+" exclusive OK(Polling,user): "+Fmt(fmt)+" , polling, "+ms+"ms");
+                            return;
+                        }
+                        DisposeSafe(ref resRef);
+                        if (Logger.Enabled) Logger.Log(which+" exclusive init-fail(user): "+Fmt(fmt));
+                    }
+                    else
+                    {
+                        outRef = wo; isExclusive=true; usedEvent=usedEventTry; effMs=ms; fmtStr=Fmt(fmt);
+                        path = Eq(buf.WaveFormat, fmt) ? PathType.PassthroughExclusive : PathType.ResampledExclusive;
+                        _preferPolling[dev.ID] = !usedEventTry; _lastGoodExclusive[dev.ID] = fmt;
+                        if (Logger.Enabled) Logger.Log(which+" exclusive OK(user): "+Fmt(fmt)+" , "+(usedEvent?"event":"polling")+", "+ms+"ms");
+                        return;
+                    }
+                }
+
+                if (_cfg.ForcePassthroughStrict)
+                {
+                    if (Logger.Enabled) Logger.Log(which+" user-force strict passthrough failed");
+                    return; // 严格直通+强制用户：失败就不回退
+                }
+            }
+
+            // ---- B) 智能候选（设置优先）----
+            var candidates = BuildExclusiveCandidates(inFmt, userRate, userBits);
             if (wantExclusive)
             {
                 exclusiveAttempted = true;
@@ -263,11 +363,11 @@ namespace MirrorAudio
                     IWaveProvider src = buf;
                     if (!Eq(buf.WaveFormat, fmt))
                     {
+                        if (_cfg.ForcePassthroughStrict) { if(Logger.Enabled) Logger.Log(which+" strict skip(non-pass,smart): "+Fmt(fmt)); continue; }
                         resRef = new MediaFoundationResampler(buf, fmt){ ResamplerQuality = auxResamplerQuality };
                         src = resRef;
                     }
 
-                    // 先试 Event，再强制 Polling
                     bool usedEventTry;
                     var wo = CreateOut(dev, AudioClientShareMode.Exclusive, cfgSync, ms, src, out usedEventTry, fmt);
                     if (wo == null)
@@ -275,31 +375,38 @@ namespace MirrorAudio
                         var woPoll = CreateOutForcePolling(dev, AudioClientShareMode.Exclusive, ms, src, fmt);
                         if (woPoll != null)
                         {
-                            outRef = woPoll; isExclusive = true; usedEvent = false; effMs = ms; fmtStr = Fmt(fmt);
+                            outRef = woPoll; isExclusive=true; usedEvent=false; effMs=ms; fmtStr=Fmt(fmt);
                             path = Eq(buf.WaveFormat, fmt) ? PathType.PassthroughExclusive : PathType.ResampledExclusive;
+                            _preferPolling[dev.ID] = true; _lastGoodExclusive[dev.ID] = fmt;
                             if (Logger.Enabled) Logger.Log(which + " exclusive OK(Polling): " + Fmt(fmt) + " , polling, " + ms + "ms");
                             return;
                         }
                         DisposeSafe(ref resRef);
-                        if (Logger.Enabled) Logger.Log(which + " exclusive init-fail (Event+Polling): " + Fmt(fmt));
+                        if (Logger.Enabled) Logger.Log(which + " exclusive init-fail: " + Fmt(fmt));
                     }
                     else
                     {
                         outRef = wo; isExclusive = true; usedEvent = usedEventTry; effMs = ms; fmtStr = Fmt(fmt);
                         path = Eq(buf.WaveFormat, fmt) ? PathType.PassthroughExclusive : PathType.ResampledExclusive;
+                        _preferPolling[dev.ID] = !usedEventTry; _lastGoodExclusive[dev.ID] = fmt;
                         if (Logger.Enabled) Logger.Log(which + " exclusive OK: " + Fmt(fmt) + " , " + (usedEvent?"event":"polling") + ", " + ms + "ms");
                         return;
                     }
                 }
             }
 
-            // 共享回退：混音直通优先，否则重采样
+            // ---- 共享回退（严格直通时禁止重采样）----
             int msS = Buf(wantMs, false, defMs);
             WaveFormat mix=null; try{ mix=dev.AudioClient.MixFormat; } catch { }
             IWaveProvider shareSrc = buf;
 
             if (mix != null && !Eq(mix, buf.WaveFormat))
             {
+                if (_cfg.ForcePassthroughStrict)
+                {
+                    if (Logger.Enabled) Logger.Log(which+" strict-passthrough: skip shared-resample to "+Fmt(mix));
+                    return; // 不播
+                }
                 resRef = new MediaFoundationResampler(buf, mix){ ResamplerQuality = auxResamplerQuality };
                 shareSrc = resRef; path = PathType.ResampledShared;
             }
@@ -316,45 +423,59 @@ namespace MirrorAudio
             }
         }
 
+        // 设置优先的智能候选：用户设定 → 输入直通 → 同率四件套（24→16→32f→32pcm） → 常见率
         List<WaveFormat> BuildExclusiveCandidates(WaveFormat inFmt, int userRate, int userBits)
         {
-            var list = new List<WaveFormat>(24);
+            var list = new List<WaveFormat>(28);
+            int ch = (inFmt!=null && inFmt.Channels>0) ? inFmt.Channels : 2;
 
-            // 0) 输入直通（最优先）
-            if (inFmt != null) list.Add(inFmt);
+            Action<WaveFormat> add = f => { if (f!=null && !list.Any(x=>Eq(x,f))) list.Add(f); };
 
-            // 一个本地小工具：同采样率四件套（32f/24packed/32pcm/16pcm）
-            Func<int,int,WaveFormat[]> Trio = (rate, ch) =>
+            // ① 用户设定（最优先）
+            var user = WaveFormatFromUser(userRate, userBits, ch, false);
+            add(user);
+
+            // ② 输入直通（次优先）
+            add(inFmt);
+
+            // ③ 同采样率四件套（先 24、16，再 32f、32pcm）
+            if (inFmt!=null && inFmt.SampleRate>0)
             {
-                return new[]
-                {
-                    WaveFormat.CreateIeeeFloatWaveFormat(rate, ch), // 32f
-                    Pcm24(rate, ch),                                // 24bit packed
-                    Pcm32(rate, ch),                                // 32bit pcm (24 有效位常见)
-                    new WaveFormat(rate, 16, ch)                    // 16bit pcm（对很多 SPDIF/HDMI 是关键）
-                };
-            };
-
-            // 1) 同采样率四件套
-            if (inFmt != null && inFmt.SampleRate > 0 && inFmt.Channels > 0)
-            {
-                foreach (var f in Trio(inFmt.SampleRate, inFmt.Channels))
-                    if (!Eq(f, inFmt) && !list.Any(x => Eq(x, f))) list.Add(f);
+                foreach (var f in new[]{ Pcm24(inFmt.SampleRate, ch), new WaveFormat(inFmt.SampleRate,16,ch),
+                                         WaveFormat.CreateIeeeFloatWaveFormat(inFmt.SampleRate,ch), Pcm32(inFmt.SampleRate,ch)})
+                    if (!Eq(f,inFmt) && !Eq(f,user)) add(f);
             }
 
-            // 2) 用户设定（仅独占有效）
-            var user = WaveFormatFromUser(userRate, userBits, (inFmt!=null?inFmt.Channels:2), false);
-            if (user != null && !list.Any(f=>Eq(f,user))) list.Add(user);
-
-            // 3) 常见采样率（48/96 优先，再 192/44.1），每个四件套
+            // ④ 常见采样率（48/96 → 192/44.1），每个按 24→16→32f→32pcm
             for (int i = 0; i < CommonRates.Length; i++)
             {
                 int r = CommonRates[i];
-                if (inFmt != null && r == inFmt.SampleRate) continue;
-                foreach (var f in Trio(r, inFmt != null ? inFmt.Channels : 2))
-                    if (!list.Any(x => Eq(x, f))) list.Add(f);
+                if (inFmt!=null && r==inFmt.SampleRate) continue;
+                foreach (var f in new[]{ Pcm24(r,ch), new WaveFormat(r,16,ch),
+                                         WaveFormat.CreateIeeeFloatWaveFormat(r,ch), Pcm32(r,ch)})
+                    add(f);
             }
+            return list;
+        }
 
+        // 以“右侧设置”为锚：只推极少数同采样率容器
+        List<WaveFormat> BuildUserAnchoredCandidates(int rate, int bits, int ch)
+        {
+            var list = new List<WaveFormat>(4);
+            if (rate<=0 || ch<=0) return list;
+
+            if (bits==24) list.Add(Pcm24(rate, ch));
+            else if (bits==16) list.Add(new WaveFormat(rate, 16, ch));
+            else if (bits==32) list.Add(Pcm32(rate, ch));
+            else list.Add(new WaveFormat(rate, bits, ch));
+
+            if (bits==24)
+            {
+                var f32pcm = Pcm32(rate, ch);
+                var f32f   = WaveFormat.CreateIeeeFloatWaveFormat(rate, ch);
+                if (!list.Any(x=>Eq(x,f32pcm))) list.Add(f32pcm);
+                if (!list.Any(x=>Eq(x,f32f)))   list.Add(f32f);
+            }
             return list;
         }
 
@@ -375,6 +496,9 @@ namespace MirrorAudio
             try
             {
                 bool useEvent = (sync==SyncModeOption.Event) || (sync==SyncModeOption.Auto && PreferEvent());
+                bool prefPoll;
+                if (sync==SyncModeOption.Auto && _preferPolling.TryGetValue(dev.ID, out prefPoll) && prefPoll) useEvent=false;
+
                 var wo = new WasapiOut(dev, mode, useEvent, ms);
                 eventUsed = useEvent;
 
@@ -387,12 +511,11 @@ namespace MirrorAudio
             catch (Exception ex) { Logger.Log("CreateOut: "+ex.Message); return null; }
         }
 
-        // 强制轮询（Polling）再试一次独占
         WasapiOut CreateOutForcePolling(MMDevice dev, AudioClientShareMode mode, int ms, IWaveProvider src, WaveFormat forceFormat)
         {
             try
             {
-                var wo = new WasapiOut(dev, mode, /*useEvent*/ false, ms);
+                var wo = new WasapiOut(dev, mode, false, ms); // 强制轮询
                 if (forceFormat!=null && !Eq(src.WaveFormat, forceFormat))
                     src = new MediaFoundationResampler(src, forceFormat){ ResamplerQuality = 50 };
                 wo.Init(src);
@@ -526,9 +649,7 @@ namespace MirrorAudio
         // ---------- 回退提示 ----------
         void MaybeNotifyFallback(string which, ShareModeOption cfgShare, bool exclusiveAttempted, bool gotExclusive, PathType path)
         {
-            // 只在尝试过独占但最终没拿到时提示
             if (!exclusiveAttempted || gotExclusive) return;
-
             string desc = (path==PathType.PassthroughSharedMix) ? "共享直通"
                        : (path==PathType.ResampledShared)       ? "共享重采样"
                        : "共享";
@@ -541,14 +662,12 @@ namespace MirrorAudio
             try{ _tray.BalloonTipTitle="MirrorAudio"; _tray.BalloonTipText=text; _tray.ShowBalloonTip(2500); } catch{}
         }
 
-        // ==== IMMNotificationClient：设备热插拔事件（事件驱动自愈）====
+        // ==== IMMNotificationClient：事件驱动自愈 ====
         public void OnDeviceStateChanged(string deviceId, DeviceState newState) { DebouncedRestart(); }
         public void OnDeviceAdded(string pwstrDeviceId) { DebouncedRestart(); }
         public void OnDeviceRemoved(string deviceId) { DebouncedRestart(); }
         public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId) { DebouncedRestart(); }
         public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key) { }
-
-        // 统一去抖重启
         void DebouncedRestart(){ _debounce.Stop(); _debounce.Start(); }
 
         // 自启动
@@ -607,6 +726,8 @@ namespace MirrorAudio
                     else if (k=="AutoStart") c.AutoStart = (v=="true");
                     else if (k=="EnableLogging") c.EnableLogging = (v=="true");
                     else if (k=="AuxResamplerQuality") c.AuxResamplerQuality=int.Parse(v);
+                    else if (k=="ForceUserFormat") c.ForceUserFormat = (v=="true");
+                    else if (k=="ForcePassthroughStrict") c.ForcePassthroughStrict = (v=="true");
                 }
             } catch {}
             return c;
@@ -628,6 +749,8 @@ namespace MirrorAudio
                 W("AutoStart", c.AutoStart? "true":"false");
                 W("EnableLogging", c.EnableLogging? "true":"false");
                 W("AuxResamplerQuality", c.AuxResamplerQuality);
+                W("ForceUserFormat", c.ForceUserFormat? "true":"false");
+                W("ForcePassthroughStrict", c.ForcePassthroughStrict? "true":"false");
                 File.WriteAllText(PathCfg, sb.ToString(), Encoding.UTF8);
             } catch {}
         }
@@ -643,7 +766,9 @@ namespace MirrorAudio
                    a.MainRate ==b.MainRate  && a.MainBits==b.MainBits && a.MainBufMs==b.MainBufMs &&
                    a.AuxRate  ==b.AuxRate   && a.AuxBits ==b.AuxBits  && a.AuxBufMs ==b.AuxBufMs  &&
                    a.AutoStart==b.AutoStart && a.EnableLogging==b.EnableLogging &&
-                   a.AuxResamplerQuality==b.AuxResamplerQuality;
+                   a.AuxResamplerQuality==b.AuxResamplerQuality &&
+                   a.ForceUserFormat==b.ForceUserFormat &&
+                   a.ForcePassthroughStrict==b.ForcePassthroughStrict;
         }
     }
 
