@@ -494,20 +494,48 @@ namespace MirrorAudio
         }
 
         // -------- 回退提示 --------
-        void MaybeNotifyFallback(string which, ShareModeOption cfgShare, bool exclusiveAttempted, bool gotExclusive, PathType path)
-        {
-            // 只在尝试过独占但最终没拿到时提示
-            if (!exclusiveAttempted || gotExclusive) return;
-
-            string desc = path==PathType.PassthroughSharedMix ? "共享直通"
-                       : path==PathType.ResampledShared      ? "共享重采样":"共享";
-            TrayTip($"{which}未能独占，已回退为「{desc}」。可尝试同采样率的 32-bit PCM 或 32f。");
-            Logger.Log($"{which} exclusive fallback -> {desc}");
-        }
-
         void TrayTip(string text)
         {
-            try{ _tray.BalloonTipTitle="MirrorAudio"; _tray.BalloonTipText=text; _tray.ShowBalloonTip(2500); } catch{}
+            try 
+            { 
+                _tray.BalloonTipTitle = "MirrorAudio"; 
+                _tray.BalloonTipText  = text; 
+                _tray.ShowBalloonTip(2500); 
+            } 
+            catch { }
+        }
+
+        // ==== IMMNotificationClient：设备热插拔事件（事件驱动自愈）====
+        public void OnDeviceStateChanged(string deviceId, DeviceState newState)
+        {
+            DebouncedRestart();
+        }
+
+        public void OnDeviceAdded(string pwstrDeviceId)
+        {
+            DebouncedRestart();
+        }
+
+        public void OnDeviceRemoved(string deviceId)
+        {
+            DebouncedRestart();
+        }
+
+        public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
+        {
+            DebouncedRestart();
+        }
+
+        public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key)
+        {
+            // 无需处理；设备属性改变不一定影响流，保持轻量
+        }
+
+        // 统一的去抖重启
+        void DebouncedRestart()
+        {
+            _debounce.Stop();
+            _debounce.Start(); // 600ms 后触发 StartOrRestart()
         }
     }
 
