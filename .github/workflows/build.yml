@@ -22,7 +22,7 @@ jobs:
 
       - name: Build x64 (Release)
         run: dotnet build ./MirrorAudio.csproj -c Release --no-restore --nologo
-        
+
       - name: Package full output
         shell: pwsh
         run: |
