@@ -93,9 +93,24 @@ namespace MirrorAudio
         public TrayApp()
         {
             Logger.Enabled=_cfg.EnableLogging;
-            try{ _mm.RegisterEndpointNotificationCallback(this);}catch{}
-            try{ _tray.Icon=File.Exists("MirrorAudio.ico")?new Icon("MirrorAudio.ico"):Icon.ExtractAssociatedIcon(Application.ExecutablePath);}catch{ _tray.Icon=SystemIcons.Application; }
-            _tray.Visible=true; _tray.Text="MirrorAudio";
+            try { _mm.RegisterEndpointNotificationCallback(this); } catch { }
+
+            // 托盘图标：优先用 Assets\MirrorAudio.ico，其次用 exe 关联，最后系统默认
+            try
+            {
+                string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "MirrorAudio.ico");
+                if (File.Exists(icoPath))
+        _tray.Icon = new Icon(icoPath);
+                else
+                    _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            }
+            catch
+            {
+                _tray.Icon = SystemIcons.Application;
+            }
+
+            _tray.Visible = true;
+            _tray.Text = "MirrorAudio";
 
             var miStart=new ToolStripMenuItem("启动/重启(&S)",null,(s,e)=>StartOrRestart());
             var miStop =new ToolStripMenuItem("停止(&T)",   null,(s,e)=>Stop());
