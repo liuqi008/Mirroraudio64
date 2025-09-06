@@ -15,6 +15,7 @@ namespace MirrorAudio
         readonly Label lblRun=new Label(), lblInput=new Label(), lblMain=new Label(), lblAux=new Label(),
                        lblMainFmt=new Label(), lblAuxFmt=new Label(), lblMainBuf=new Label(), lblAuxBuf=new Label(),
                        lblMainPer=new Label(), lblAuxPer=new Label();
+                       readonly Label lblMainReq=new Label(), lblMainQtz=new Label(), lblAuxReq=new Label(), lblAuxQtz=new Label();
                        readonly Label lblMainPass=new Label(), lblAuxPass=new Label();
 
         // 右侧设置控件
@@ -70,11 +71,15 @@ namespace MirrorAudio
             AddRow(tblS, "主缓冲", lblMainBuf);
             AddRow(tblS, "主周期", lblMainPer);
             AddRow(tblS, "主直通", lblMainPass);
+            AddRow(tblS, "主缓冲(请求)", lblMainReq);
+            AddRow(tblS, "主缓冲(量化)", lblMainQtz);
             AddRow(tblS, "副通道", lblAux);
             AddRow(tblS, "副格式", lblAuxFmt);
             AddRow(tblS, "副缓冲", lblAuxBuf);
             AddRow(tblS, "副周期", lblAuxPer);
             AddRow(tblS, "副直通", lblAuxPass);
+            AddRow(tblS, "副缓冲(请求)", lblAuxReq);
+            AddRow(tblS, "副缓冲(量化)", lblAuxQtz);
 
             var pBtns = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 6, 0, 4) };
             btnRefresh.Text = "刷新状态";
@@ -85,8 +90,20 @@ namespace MirrorAudio
                 Clipboard.SetText(BuildStatusText());
                 MessageBox.Show("状态已复制。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
+            
+            var chkForcePass = new CheckBox { Text = "强制直通（能直通就不用重采样）", AutoSize = true }; var chkRaw = new CheckBox { Text = "RAW 优先（尽可能绕 APO）", AutoSize = true };
+            chkForcePass.Checked = _cfg.ForcePassthrough; chkRaw.Checked = _cfg.ForceRaw;
+
+            
+            var chkAdvanced = new CheckBox { Text = "显示高级状态", AutoSize = true };
+            chkAdvanced.Checked = _cfg.ShowAdvanced;
+            chkAdvanced.CheckedChanged += (s,e) => {
+                bool v = chkAdvanced.Checked;
+                lblMainReq.Visible = lblMainQtz.Visible = lblAuxReq.Visible = lblAuxQtz.Visible = v;
+            };
+
             pBtns.Controls.Add(btnRefresh);
-            pBtns.Controls.Add(btnCopy);
+            pBtns.Controls.Add(btnCopy); pBtns.Controls.Add(chkRaw); pBtns.Controls.Add(chkAdvanced);
 
             grpS.Controls.Add(tblS);
             grpS.Controls.Add(pBtns);
@@ -240,6 +257,11 @@ namespace MirrorAudio
             lblAuxPer.Text  = "默认 " + s.AuxDefaultPeriodMs .ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs .ToString("0.##") + " ms";
             lblMainPass.Text = s.MainMode=="-" ? "-" : (s.MainPassthrough ? "直通（独占&无重采样）" : (s.MainMode=="独占" ? "非直通（可能重采样）" : "不适用（共享混音）"));
             lblAuxPass.Text  = s.AuxMode=="-"  ? "-" : (s.AuxPassthrough  ? "直通（独占&无重采样）" : (s.AuxMode=="独占"  ? "非直通（可能重采样）" : "不适用（共享混音）"));
+            lblMainReq.Text = s.MainBufRequestedMs>0 ? (s.MainBufRequestedMs + " ms") : "-";
+            lblMainQtz.Text = s.MainBufQuantizedMs>0 ? (s.MainBufQuantizedMs + " ms") : "-";
+            lblAuxReq.Text  = s.AuxBufRequestedMs>0  ? (s.AuxBufRequestedMs  + " ms") : "-";
+            lblAuxQtz.Text  = s.AuxBufQuantizedMs>0  ? (s.AuxBufQuantizedMs  + " ms") : "-";
+            lblMainReq.Visible = lblMainQtz.Visible = lblAuxReq.Visible = lblAuxQtz.Visible = _cfg.ShowAdvanced;
         }
 
         string BuildStatusText()
@@ -260,6 +282,13 @@ namespace MirrorAudio
             
             sb.AppendLine("主直通: " + (s.MainMode=="-" ? "-" : (s.MainPassthrough ? "直通" : (s.MainMode=="独占" ? "非直通" : "不适用"))));
             sb.AppendLine("副直通: " + (s.AuxMode=="-"  ? "-" : (s.AuxPassthrough  ? "直通" : (s.AuxMode=="独占"  ? "非直通" : "不适用"))));
+            
+            if(_cfg.ShowAdvanced){
+                sb.AppendLine("主缓冲(请求): " + (s.MainBufRequestedMs>0 ? (s.MainBufRequestedMs + " ms") : "-"));
+                sb.AppendLine("主缓冲(量化): " + (s.MainBufQuantizedMs>0 ? (s.MainBufQuantizedMs + " ms") : "-"));
+                sb.AppendLine("副缓冲(请求): " + (s.AuxBufRequestedMs>0  ? (s.AuxBufRequestedMs  + " ms") : "-"));
+                sb.AppendLine("副缓冲(量化): " + (s.AuxBufQuantizedMs>0  ? (s.AuxBufQuantizedMs  + " ms") : "-"));
+            }
             return sb.ToString();
         }
 
@@ -353,6 +382,9 @@ namespace MirrorAudio
                 EnableLogging = chkLogging.Checked
             };
 
+            _cfg.ForcePassthrough = chkForcePass.Checked;
+                        _cfg.ForceRaw = chkRaw.Checked;
+            _cfg.ShowAdvanced = chkAdvanced.Checked;
             DialogResult = DialogResult.OK;
             Close();
         }
