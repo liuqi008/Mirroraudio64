@@ -78,34 +78,16 @@ namespace MirrorAudio
             // 右：设置（设备→主→副→其他）
             var right=new Panel{ Dock=DockStyle.Fill, AutoScroll=true, Padding=new Padding(10) };
 
-            // 设备
-            var gDev=new GroupBox{ Text="设备（选择并枚举）", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
-            var tDev=new TableLayoutPanel{ ColumnCount=2, Dock=DockStyle.Top, AutoSize=true };
-            tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,34)); tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,66));
-            cmbInput.DropDownStyle=ComboBoxStyle.DropDownList; cmbMain.DropDownStyle=ComboBoxStyle.DropDownList; cmbAux.DropDownStyle=ComboBoxStyle.DropDownList;
-            AddRow(tDev,"通道1 输入设备", cmbInput);
-            AddRow(tDev,"通道2 主输出设备",cmbMain);
-            AddRow(tDev,"通道3 副输出设备",cmbAux);
-            btnReload.Text="重新枚举设备"; btnReload.AutoSize=true; btnReload.Click+=(s,e)=>LoadDevices();
-            tDev.RowStyles.Add(new RowStyle(SizeType.AutoSize)); tDev.Controls.Add(btnReload,1,tDev.RowCount++);
-            gDev.Controls.Add(tDev); right.Controls.Add(gDev);
+            // 其他
+            var gOpt=new GroupBox{ Text="其他", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
+            var pOpt=new FlowLayoutPanel{ FlowDirection=FlowDirection.LeftToRight, Dock=DockStyle.Top, AutoSize=true };
+            chkAutoStart.Text="Windows 自启动"; chkLogging.Text="启用日志（排障时开启）";
+            pOpt.Controls.Add(chkAutoStart); pOpt.Controls.Add(chkLogging);
+            gOpt.Controls.Add(pOpt); right.Controls.Add(gOpt);
 
-            // 主输出
-            var gMain=new GroupBox{ Text="主输出（高音质，低延迟）", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
-            var tMain=new TableLayoutPanel{ ColumnCount=2, Dock=DockStyle.Top, AutoSize=true };
-            tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,34)); tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,66));
-            cmbShareMain.DropDownStyle=ComboBoxStyle.DropDownList; cmbSyncMain.DropDownStyle=ComboBoxStyle.DropDownList;
-            cmbShareMain.Items.AddRange(new object[]{"自动（优先独占）","强制独占","强制共享"});
-            cmbSyncMain .Items.AddRange(new object[]{"自动（事件优先）","强制事件","强制轮询"});
-            numRateMain.Maximum=384000; numRateMain.Minimum=44100; numRateMain.Increment=1000;
-            numBitsMain.Maximum=32;     numBitsMain.Minimum=16;    numBitsMain.Increment=8;
-            numBufMain.Maximum =200;    numBufMain.Minimum =4;
-            AddRow(tMain,"模式",cmbShareMain);
-            AddRow(tMain,"同步方式",cmbSyncMain);
-            AddRow(tMain,"采样率 (Hz，仅独占)",numRateMain);
-            AddRow(tMain,"位深 (bit，仅独占)", numBitsMain);
-            AddRow(tMain,"缓冲 (ms)",           numBufMain);
-            gMain.Controls.Add(tMain); right.Controls.Add(gMain);
+            // 右侧顺序已按从上到下：设备→主→副→其他（通过Add顺序保证）
+            split.Panel2.Controls.Clear();
+            split.Panel2.Controls.Add(right);
 
             // 副输出
             var gAux=new GroupBox{ Text="副输出（直播推流）", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
@@ -127,17 +109,36 @@ namespace MirrorAudio
             AddRow(tAux,"音质（重采样质量）",   cmbAuxQuality); // 新增
             gAux.Controls.Add(tAux); right.Controls.Add(gAux);
 
-            // 其他
-            var gOpt=new GroupBox{ Text="其他", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
-            var pOpt=new FlowLayoutPanel{ FlowDirection=FlowDirection.LeftToRight, Dock=DockStyle.Top, AutoSize=true };
-            chkAutoStart.Text="Windows 自启动"; chkLogging.Text="启用日志（排障时开启）";
-            pOpt.Controls.Add(chkAutoStart); pOpt.Controls.Add(chkLogging);
-            gOpt.Controls.Add(pOpt); right.Controls.Add(gOpt);
+            // 主输出
+            var gMain=new GroupBox{ Text="主输出（高音质，低延迟）", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
+            var tMain=new TableLayoutPanel{ ColumnCount=2, Dock=DockStyle.Top, AutoSize=true };
+            tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,34)); tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,66));
+            cmbShareMain.DropDownStyle=ComboBoxStyle.DropDownList; cmbSyncMain.DropDownStyle=ComboBoxStyle.DropDownList;
+            cmbShareMain.Items.AddRange(new object[]{"自动（优先独占）","强制独占","强制共享"});
+            cmbSyncMain .Items.AddRange(new object[]{"自动（事件优先）","强制事件","强制轮询"});
+            numRateMain.Maximum=384000; numRateMain.Minimum=44100; numRateMain.Increment=1000;
+            numBitsMain.Maximum=32;     numBitsMain.Minimum=16;    numBitsMain.Increment=8;
+            numBufMain.Maximum =200;    numBufMain.Minimum =4;
+            AddRow(tMain,"模式",cmbShareMain);
+            AddRow(tMain,"同步方式",cmbSyncMain);
+            AddRow(tMain,"采样率 (Hz，仅独占)",numRateMain);
+            AddRow(tMain,"位深 (bit，仅独占)", numBitsMain);
+            AddRow(tMain,"缓冲 (ms)",           numBufMain);
+            gMain.Controls.Add(tMain); right.Controls.Add(gMain);
 
-            // 右侧顺序已按从上到下：设备→主→副→其他（通过Add顺序保证）
-            split.Panel2.Controls.Clear();
-            split.Panel2.Controls.Add(right);
+            // 设备
+            var gDev=new GroupBox{ Text="设备（选择并枚举）", Dock=DockStyle.Top, AutoSize=true, Padding=new Padding(10) };
+            var tDev=new TableLayoutPanel{ ColumnCount=2, Dock=DockStyle.Top, AutoSize=true };
+            tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,34)); tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,66));
+            cmbInput.DropDownStyle=ComboBoxStyle.DropDownList; cmbMain.DropDownStyle=ComboBoxStyle.DropDownList; cmbAux.DropDownStyle=ComboBoxStyle.DropDownList;
+            AddRow(tDev,"通道1 输入设备", cmbInput);
+            AddRow(tDev,"通道2 主输出设备",cmbMain);
+            AddRow(tDev,"通道3 副输出设备",cmbAux);
+            btnReload.Text="重新枚举设备"; btnReload.AutoSize=true; btnReload.Click+=(s,e)=>LoadDevices();
+            tDev.RowStyles.Add(new RowStyle(SizeType.AutoSize)); tDev.Controls.Add(btnReload,1,tDev.RowCount++);
+            gDev.Controls.Add(tDev); right.Controls.Add(gDev);
 
+            
             // 底部按钮
             var pnlButtons=new FlowLayoutPanel{ FlowDirection=FlowDirection.RightToLeft, Dock=DockStyle.Bottom, Padding=new Padding(10), AutoSize=true };
             btnOk.Text="保存"; btnCancel.Text="取消"; AcceptButton=btnOk; CancelButton=btnCancel;
