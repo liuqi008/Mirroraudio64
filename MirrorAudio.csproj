@@ -1,29 +1,23 @@
-<Project Sdk="Microsoft.NET.Sdk">
-
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
-    <AssemblyName>MirrorAudio</AssemblyName>
-    <RootNamespace>MirrorAudio</RootNamespace>
-    <Platforms>x64</Platforms>
-    <OutputType>WinExe</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
-    <Prefer32Bit>false</Prefer32Bit>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- 固定 x64，这样 workflow 里就不用再传 /p:PlatformTarget -->
+    <PlatformTarget>x64</PlatformTarget>
+
+    <ApplicationIcon>Assets\MirrorAudio.ico</ApplicationIcon>
     <Nullable>disable</Nullable>
-    <LangVersion>latest</LangVersion>
-    <!-- 仅当图标存在时才使用，避免缺文件导致 CS7064 -->
-    <ApplicationIcon Condition="Exists('Assets\MirrorAudio.ico')">Assets\MirrorAudio.ico</ApplicationIcon>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="Microsoft.Windows.Compatibility" Version="7.0.5" />
   </ItemGroup>
 
-  <!-- 保证编译打包能带上图标（若存在） -->
   <ItemGroup>
-    <Content Include="Assets\MirrorAudio.ico" Condition="Exists('Assets\MirrorAudio.ico')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <!-- 确保图标存在并可复制（可不复制到输出，仅供编译用） -->
+    <None Include="Assets\MirrorAudio.ico" />
   </ItemGroup>
-
 </Project>
