@@ -58,7 +58,8 @@ namespace MirrorAudio
     public sealed class StatusSnapshot
     {
         public bool Running; public string InputRole,InputFormat,InputDevice,MainDevice,AuxDevice,MainMode,AuxMode,MainSync,AuxSync,MainFormat,AuxFormat;
-        public int MainBufferMs,AuxBufferMs; public double MainDefaultPeriodMs,MainMinimumPeriodMs,AuxDefaultPeriodMs,AuxMinimumPeriodMs;
+        public int MainBufferMs,AuxBufferMs;
+        public int MainBufRequestedMs, MainBufQuantizedMs, AuxBufRequestedMs, AuxBufQuantizedMs; public double MainDefaultPeriodMs,MainMinimumPeriodMs,AuxDefaultPeriodMs,AuxMinimumPeriodMs;
     
         public bool MainPassthrough, AuxPassthrough;
 }
@@ -67,6 +68,9 @@ namespace MirrorAudio
     {
         static readonly string Dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"MirrorAudio");
         static readonly string FilePath=Path.Combine(Dir,"settings.json");
+
+        static readonly System.Buffers.ArrayPool<byte> _bytePool = System.Buffers.ArrayPool<byte>.Shared;
+    
         public static AppSettings Load(){ try{ if(!File.Exists(FilePath)) return new AppSettings(); using(var fs=File.OpenRead(FilePath)) return (AppSettings)new DataContractJsonSerializer(typeof(AppSettings)).ReadObject(fs);}catch{ return new AppSettings(); }}
         public static void Save(AppSettings s){ try{ if(!Directory.Exists(Dir)) Directory.CreateDirectory(Dir); using(var fs=File.Create(FilePath)) new DataContractJsonSerializer(typeof(AppSettings)).WriteObject(fs,s);}catch{} }
     }
@@ -86,7 +90,7 @@ namespace MirrorAudio
         MediaFoundationResampler _resMain,_resAux;
 
         bool _running,_mainIsExclusive,_mainEventSyncUsed,_auxIsExclusive,_auxEventSyncUsed;
-        int _mainBufEffectiveMs,_auxBufEffectiveMs;
+        int _mainBufEffectiveMs,_auxBufEffectiveMs; int _mainBufQuantizedMs,_auxBufQuantizedMs;
         string _inRoleStr="-",_inFmtStr="-",_inDevName="-",_mainFmtStr="-",_auxFmtStr="-";
         double _defMainMs=10,_minMainMs=2,_defAuxMs=10,_minAuxMs=2;
 
@@ -190,24 +194,24 @@ namespace MirrorAudio
             if(wantExMain)
             {
                 if(SupportsExclusive(_outMain,desiredMain)){ if(!Eq(inFmt,desiredMain)) _srcMain=_resMain=new MediaFoundationResampler(_bufMain,desiredMain){ ResamplerQuality=50 };
-                    int ms=Buf(_cfg.MainBufMs,true,_defMainMs,_minMainMs);
+                    int ms=Buf(_cfg.MainBufMs,true,_defMainMs,_minMainMs); _mainBufQuantizedMs=ms;
                     _mainOut=CreateOut(_outMain,AudioClientShareMode.Exclusive,_cfg.MainSync,ms,_srcMain,out _mainEventSyncUsed);
-                    if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(desiredMain); }
+                    if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=CalcEffectiveMs(_mainOut); _mainFmtStr=Fmt(desiredMain); }
                 }
                 if(_mainOut==null && _cfg.MainBits==24){ var fmt32=new WaveFormat(_cfg.MainRate,32,2); if(SupportsExclusive(_outMain,fmt32)){
                         _srcMain=_resMain=new MediaFoundationResampler(_bufMain,fmt32){ ResamplerQuality=50 };
-                        int ms=Buf(_cfg.MainBufMs,true,_defMainMs,_minMainMs);
+                        int ms=Buf(_cfg.MainBufMs,true,_defMainMs,_minMainMs); _mainBufQuantizedMs=ms;
                         _mainOut=CreateOut(_outMain,AudioClientShareMode.Exclusive,_cfg.MainSync,ms,_srcMain,out _mainEventSyncUsed);
-                        if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(fmt32); }
+                        if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=CalcEffectiveMs(_mainOut); _mainFmtStr=Fmt(fmt32); }
                 }}
                 if(_mainOut==null && _cfg.MainShare==ShareModeOption.Exclusive){ MessageBox.Show("主通道独占失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Warning); Cleanup(); return; }
             }
             if(_mainOut==null)
             {
-                int ms=Buf(_cfg.MainBufMs,false,_defMainMs);
+                int ms=Buf(_cfg.MainBufMs,false,_defMainMs); _mainBufQuantizedMs=ms;
                 _mainOut=CreateOut(_outMain,AudioClientShareMode.Shared,_cfg.MainSync,ms,_bufMain,out _mainEventSyncUsed);
                 if(_mainOut==null){ MessageBox.Show("主通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
-                _mainBufEffectiveMs=ms; try{ _mainFmtStr=Fmt(_outMain.AudioClient.MixFormat);}catch{ _mainFmtStr="系统混音"; }
+                _mainBufEffectiveMs=CalcEffectiveMs(_mainOut); try{ _mainFmtStr=Fmt(_outMain.AudioClient.MixFormat);}catch{ _mainFmtStr="系统混音"; }
             }
 
             // 副通道
@@ -220,24 +224,24 @@ namespace MirrorAudio
             if(wantExAux)
             {
                 if(SupportsExclusive(_outAux,desiredAux)){ if(!Eq(inFmt,desiredAux)) _srcAux=_resAux=new MediaFoundationResampler(_bufAux,desiredAux){ ResamplerQuality=40 };
-                    int ms=Buf(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs);
+                    int ms=Buf(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs); _auxBufQuantizedMs=ms;
                     _auxOut=CreateOut(_outAux,AudioClientShareMode.Exclusive,_cfg.AuxSync,ms,_srcAux,out _auxEventSyncUsed);
-                    if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(desiredAux); }
+                    if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=CalcEffectiveMs(_auxOut); _auxFmtStr=Fmt(desiredAux); }
                 }
                 if(_auxOut==null && _cfg.AuxBits==24){ var fmt32=new WaveFormat(_cfg.AuxRate,32,2); if(SupportsExclusive(_outAux,fmt32)){
                         _srcAux=_resAux=new MediaFoundationResampler(_bufAux,fmt32){ ResamplerQuality=40 };
-                        int ms=Buf(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs);
+                        int ms=Buf(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs); _auxBufQuantizedMs=ms;
                         _auxOut=CreateOut(_outAux,AudioClientShareMode.Exclusive,_cfg.AuxSync,ms,_srcAux,out _auxEventSyncUsed);
-                        if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(fmt32); }
+                        if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=CalcEffectiveMs(_auxOut); _auxFmtStr=Fmt(fmt32); }
                 }}
                 if(_auxOut==null && _cfg.AuxShare==ShareModeOption.Exclusive){ MessageBox.Show("副通道独占失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Warning); Cleanup(); return; }
             }
             if(_auxOut==null)
             {
-                int ms=Buf(_cfg.AuxBufMs,false,_defAuxMs);
+                int ms=Buf(_cfg.AuxBufMs,false,_defAuxMs); _auxBufQuantizedMs=ms;
                 _auxOut=CreateOut(_outAux,AudioClientShareMode.Shared,_cfg.AuxSync,ms,_bufAux,out _auxEventSyncUsed);
                 if(_auxOut==null){ MessageBox.Show("副通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
-                _auxBufEffectiveMs=ms; try{ _auxFmtStr=Fmt(_outAux.AudioClient.MixFormat);}catch{ _auxFmtStr="系统混音"; }
+                _auxBufEffectiveMs=CalcEffectiveMs(_auxOut); try{ _auxFmtStr=Fmt(_outAux.AudioClient.MixFormat);}catch{ _auxFmtStr="系统混音"; }
             }
 
             _capture.DataAvailable+=OnIn; _capture.RecordingStopped+=OnStopRec;
@@ -279,6 +283,8 @@ namespace MirrorAudio
                 MainSync=_mainOut!=null?(_mainEventSyncUsed?"事件":"轮询"):"-",  AuxSync=_auxOut!=null?(_auxEventSyncUsed?"事件":"轮询"):"-",
                 MainFormat=_mainOut!=null?_mainFmtStr:"-", AuxFormat=_auxOut!=null?_auxFmtStr:"-",
                 MainBufferMs=_mainOut!=null?_mainBufEffectiveMs:0, AuxBufferMs=_auxOut!=null?_auxBufEffectiveMs:0,
+                MainBufRequestedMs=_cfg.MainBufMs, AuxBufRequestedMs=_cfg.AuxBufMs,
+                MainBufQuantizedMs=_mainBufQuantizedMs, AuxBufQuantizedMs=_auxBufQuantizedMs,
                 MainDefaultPeriodMs=_defMainMs, MainMinimumPeriodMs=_minMainMs, AuxDefaultPeriodMs=_defAuxMs, AuxMinimumPeriodMs=_minAuxMs
             ,
                 MainPassthrough = _mainOut!=null && _mainIsExclusive && _resMain==null,
@@ -323,6 +329,34 @@ namespace MirrorAudio
             return ms;
         }
 
+        
+        static void ApplyRawIfPossible(WasapiOut w, bool rawPreferred)
+        {
+            if(!rawPreferred || w==null) return;
+            try
+            {
+                // Best-effort: try to set AudioClientProperties.StreamOptions = Raw via reflection if available (NAudio 2.x+)
+                var ac = w.AudioClient;
+                var t = ac.GetType();
+                var prop = t.GetProperty("AudioClientProperties");
+                if(prop!=null)
+                {
+                    var val = prop.GetValue(ac);
+                    if(val!=null)
+                    {
+                        var st = val.GetType().GetProperty("StreamOptions");
+                        if(st!=null)
+                        {
+                            var enumType = st.PropertyType;
+                            var rawVal = Enum.Parse(enumType, "Raw");
+                            st.SetValue(val, rawVal);
+                            prop.SetValue(ac, val);
+                        }
+                    }
+                }
+            } catch { /* no-op if not supported */ }
+        }
+    
         WasapiOut CreateOut(MMDevice dev,AudioClientShareMode mode,SyncModeOption pref,int bufMs,IWaveProvider src,out bool eventUsed)
         {
             eventUsed=false; WasapiOut w;
@@ -332,8 +366,24 @@ namespace MirrorAudio
         }
         WasapiOut TryOut(MMDevice dev,AudioClientShareMode mode,bool ev,int ms,IWaveProvider src)
         {
-            try{ var w=new WasapiOut(dev,mode,ev,ms); w.Init(src); if(Logger.Enabled) Logger.Info($"OK {dev.FriendlyName} | {mode} | {(ev?"event":"poll")} | {ms}ms"); return w; }
+            try{ var w=new WasapiOut(dev,mode,ev,ms); ApplyRawIfPossible(w, _cfg.ForceRaw); w.Init(src); if(Logger.Enabled) Logger.Info($"OK {dev.FriendlyName} | {mode} | {(ev?"event":"poll")} | {ms}ms"); return w; }
             catch(Exception ex){ if(Logger.Enabled) Logger.Info($"Fail {dev.FriendlyName} | {mode} | {(ev?"event":"poll")} | {ms}ms | 0x{((uint)ex.HResult):X8} {ex.Message}"); return null; }
+        }
+
+        
+        static int CalcEffectiveMs(WasapiOut w)
+        {
+            try
+            {
+                var ac = w?.AudioClient;
+                if (ac == null) return 0;
+                int frames = ac.AudioBufferSize;
+                var wf = ac.MixFormat;
+                if (wf == null || wf.SampleRate <= 0) return 0;
+                double ms = (frames * 1000.0) / wf.SampleRate;
+                return (int)Math.Round(ms, MidpointRounding.AwayFromZero);
+            }
+            catch { return 0; }
         }
 
         public void Dispose(){ Stop(); try{ _mm?.UnregisterEndpointNotificationCallback(this);}catch{} _debounce.Dispose(); _tray.Visible=false; _tray.Dispose(); _menu.Dispose(); }
