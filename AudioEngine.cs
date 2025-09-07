@@ -44,13 +44,6 @@ namespace MirrorAudio.AppContextApp
                 _capture = cap;
                 inputFormat = cap.WaveFormat;
             }
-            else
-            {
-                var defaultRender = _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                _capture = new WasapiLoopbackCapture(defaultRender);
-                _capture.StartRecording();
-                inputFormat = _capture.WaveFormat;
-            }
 
             // 2) 输出：主/副均创建独立缓冲；若禁用独占则仍用ExclusivePlayer包装（内部会选择共享）
             _mainBuf = new BufferedWaveProvider(inputFormat) { DiscardOnBufferOverflow = true };
