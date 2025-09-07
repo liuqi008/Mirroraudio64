@@ -24,7 +24,7 @@ namespace MirrorAudio
         readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericUpDown(), numBufMain=new NumericUpDown(),
                                numRateAux =new NumericUpDown(), numBitsAux =new NumericUpDown(), numBufAux =new NumericUpDown();
 
-        readonly CheckBox chkAutoStart=new CheckBox(), chkLogging=new CheckBox();
+        readonly CheckBox chkAutoStart=new CheckBox(), chkLogging=new CheckBox(), chkMainPass=new CheckBox(), chkAuxPass=new CheckBox();
         readonly Button btnOk=new Button(), btnCancel=new Button(), btnRefresh=new Button(), btnCopy=new Button(), btnReload=new Button();
 
         readonly Func<StatusSnapshot> _statusProvider;
@@ -127,6 +127,7 @@ namespace MirrorAudio
             AddRow(tAux, "采样率 (Hz，仅独占)", numRateAux);
             AddRow(tAux, "位深 (bit，仅独占)",  numBitsAux);
             AddRow(tAux, "缓冲 (ms)",            numBufAux);
+            AddRow(tAux, "强制直通（禁用重采样，仅独占）", chkAuxPass);
 
             gAux.Controls.Add(tAux);
             right.Controls.Add(gAux);
@@ -151,6 +152,7 @@ namespace MirrorAudio
             AddRow(tMain, "采样率 (Hz，仅独占)", numRateMain);
             AddRow(tMain, "位深 (bit，仅独占)",  numBitsMain);
             AddRow(tMain, "缓冲 (ms)",            numBufMain);
+            AddRow(tMain, "强制直通（禁用重采样，仅独占）", chkMainPass);
 
             gMain.Controls.Add(tMain);
             right.Controls.Add(gMain);
@@ -220,6 +222,8 @@ namespace MirrorAudio
 
             chkAutoStart.Checked = cur.AutoStart;
             chkLogging.Checked   = cur.EnableLogging;
+            chkMainPass.Checked = cur.MainPassthrough;
+            chkAuxPass.Checked  = cur.AuxPassthrough;
         }
 
         void RenderStatus()
@@ -342,7 +346,9 @@ namespace MirrorAudio
                 AuxBits   = (int)numBitsAux.Value,
                 AuxBufMs  = (int)numBufAux.Value,
                 AutoStart = chkAutoStart.Checked,
-                EnableLogging = chkLogging.Checked
+                EnableLogging = chkLogging.Checked,
+                MainPassthrough = chkMainPass.Checked,
+                AuxPassthrough  = chkAuxPass.Checked
             };
 
             DialogResult = DialogResult.OK;

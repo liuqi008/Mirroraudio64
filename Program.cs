@@ -53,6 +53,7 @@ namespace MirrorAudio
         [DataMember] public int MainRate=192000, MainBits=24, MainBufMs=12;
         [DataMember] public int AuxRate =48000,  AuxBits =16,  AuxBufMs =150;
         [DataMember] public bool AutoStart=false, EnableLogging=false;
+        [DataMember] public bool MainPassthrough=false, AuxPassthrough=false;
     }
 
     public sealed class StatusSnapshot
@@ -180,6 +181,49 @@ namespace MirrorAudio
 
             // 主通道：独占/共享 + 事件/轮询
             _srcMain=_bufMain; _resMain=null; _mainIsExclusive=false; _mainEventSyncUsed=false; _mainBufEffectiveMs=_cfg.MainBufMs; _mainFmtStr="-";
+            
+            // PATCH: 强制直通（主通道）
+            if (_cfg.MainPassthrough)
+            {
+                _srcMain = _bufMain;          // 禁用重采样
+                _resMain = null;
+                _mainIsExclusive = false;
+                _mainEventSyncUsed = false;
+                _mainBufEffectiveMs = _cfg.MainBufMs;
+
+                // 直通要求：输入不能是主设备本身的环回
+                bool isLoopMainPT = (_inDev.DataFlow == DataFlow.Render) && _inDev.ID == _outMain.ID;
+                if (isLoopMainPT)
+                {
+                    MessageBox.Show("已启用“主通道强制直通”，但当前输入为主设备环回，无法独占直通。请更换输入或改为共享模式。",
+                        "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    Cleanup(); return;
+                }
+
+                // 直通要求：S/PDIF 设备需独占支持“输入原样格式”
+                var passthruFmt = _bufMain.WaveFormat;
+                if (!SupportsExclusive(_outMain, passthruFmt))
+                {
+                    MessageBox.Show("主通道强制直通失败：S/PDIF 设备不支持输入原样格式（" + Fmt(passthruFmt) + "）的独占直通。",
+                        "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    Cleanup(); return;
+                }
+
+                int ms = Buf(_cfg.MainBufMs, true, _defMainMs, _minMainMs);
+                _mainOut = CreateOut(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
+                if (_mainOut == null)
+                {
+                    MessageBox.Show("主通道强制直通初始化失败（独占打开未成功）。", "MirrorAudio",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Cleanup(); return;
+                }
+
+                _mainIsExclusive = true;
+                _mainBufEffectiveMs = ms;
+                _mainFmtStr = Fmt(passthruFmt);
+                goto AfterMainSetup;
+            }
+
             var desiredMain=new WaveFormat(_cfg.MainRate,_cfg.MainBits,2);
             bool isLoopMain=(_inDev.DataFlow==DataFlow.Render)&&_inDev.ID==_outMain.ID;
             bool wantExMain=(_cfg.MainShare==ShareModeOption.Exclusive||_cfg.MainShare==ShareModeOption.Auto)&&!isLoopMain;
@@ -207,6 +251,8 @@ namespace MirrorAudio
                 if(_mainOut==null){ MessageBox.Show("主通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
                 _mainBufEffectiveMs=ms; try{ _mainFmtStr=Fmt(_outMain.AudioClient.MixFormat);}catch{ _mainFmtStr="系统混音"; }
             }
+
+        AfterMainSetup:
 
             // 副通道
             _srcAux=_bufAux; _resAux=null; _auxIsExclusive=false; _auxEventSyncUsed=false; _auxBufEffectiveMs=_cfg.AuxBufMs; _auxFmtStr="-";
