@@ -1,39 +1,66 @@
-name: Build MirrorAudio
+name: CI - Build & Publish (Windows)
+
 on:
+  push:
+    branches: [ "main", "master", "develop" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master", "develop" ]
   workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
 jobs:
   build:
+    name: Build & Publish
     runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET SDK
+      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
-          cache: true
-          cache-dependency-path: MirrorAudio.csproj
+          dotnet-version: |
+            8.0.x
 
       - name: Restore
-        run: dotnet restore ./MirrorAudio.csproj --nologo
+        run: dotnet restore ./MirrorAudio.AppContext.csproj
 
-      - name: Build x64 (Release)
-        run: dotnet build ./MirrorAudio.csproj -c Release -p:PlatformTarget=x64 -p:GenerateRuntimeConfigurationFiles=true --no-restore --nologo
+      - name: Build (Release)
+        run: dotnet build ./MirrorAudio.AppContext.csproj -c Release --no-restore --nologo
 
-      - name: Package full output
-        shell: pwsh
-        run: |
-          $outDir = Join-Path $pwd 'bin\Release\net48'
-          if (-not (Test-Path $outDir)) { Write-Error "Output not found: $outDir"; exit 1 }
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Copy-Item "$outDir\*" artifacts -Recurse -Force
-          Write-Host "Packed files:"; Get-ChildItem artifacts | % { Write-Host " - " $_.Name }
+      - name: Publish (Self-contained, win-x64)
+        run: >
+          dotnet publish ./MirrorAudio.AppContext.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -p:EnableWindowsTargeting=true
+          -o out/win-x64
 
-      - name: Upload artifact
+      - name: Upload artifact (win-x64)
         uses: actions/upload-artifact@v4
         with:
-          name: MirrorAudio-x64-net48
-          path: artifacts
+          name: MirrorAudio.AppContext-win-x64
+          path: out/win-x64/**
+
+      - name: (Optional) Zip artifact
+        shell: pwsh
+        run: |
+          Compress-Archive -Path out/win-x64/* -DestinationPath MirrorAudio.AppContext-win-x64.zip
+          echo "Zipped to MirrorAudio.AppContext-win-x64.zip"
+
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            MirrorAudio.AppContext-win-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
