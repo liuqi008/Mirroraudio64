@@ -83,6 +83,9 @@ namespace MirrorAudio
     public sealed class StatusSnapshot
     {
         public bool Running;
+        public int MainBufferRequestedMs, AuxBufferRequestedMs;
+        public double MainAlignedMultiple, AuxAlignedMultiple;
+        public double MainBufferMultiple, AuxBufferMultiple;
         public string InputRole,InputFormat,InputDevice;
         public string InputRequested,InputAccepted,InputMix;
         public string MainDevice,AuxDevice,MainMode,AuxMode,MainSync,AuxSync,MainFormat,AuxFormat;
@@ -364,7 +367,20 @@ namespace MirrorAudio
         // —— 状态给设置窗体 —— //
         public StatusSnapshot GetStatusSnapshot()
         {
-            return new StatusSnapshot{
+            
+            // 计算对齐倍数：独占优先按最小周期倍数；否则按默认周期倍数
+            double mainMul = 0, auxMul = 0;
+            try {
+                if (_mainBufEffectiveMs > 0) {
+                    double baseMs = (_mainIsExclusive && _minMainMs > 0) ? _minMainMs : _defMainMs;
+                    if (baseMs > 0) mainMul = Math.Round(_mainBufEffectiveMs / baseMs, 2);
+                }
+                if (_auxBufEffectiveMs > 0) {
+                    double baseMs = (_auxIsExclusive && _minAuxMs > 0) ? _minAuxMs : _defAuxMs;
+                    if (baseMs > 0) auxMul = Math.Round(_auxBufEffectiveMs / baseMs, 2);
+                }
+            } catch {}
+return new StatusSnapshot{
                 Running=_running,
                 InputRole=_inRoleStr, InputFormat=_inFmtStr, InputDevice=_inDevName,
                 InputRequested=_inReqStr, InputAccepted=_inAccStr, InputMix=_inMixStr,
@@ -373,9 +389,13 @@ namespace MirrorAudio
                 MainMode=_mainOut!=null?(_mainIsExclusive?"独占":"共享"):"-", AuxMode=_auxOut!=null?(_auxIsExclusive?"独占":"共享"):"-",
                 MainSync=_mainOut!=null?(_mainEventSyncUsed?"事件":"轮询"):"-",  AuxSync=_auxOut!=null?(_auxEventSyncUsed?"事件":"轮询"):"-",
                 MainFormat=_mainOut!=null?_mainFmtStr:"-", AuxFormat=_auxOut!=null?_auxFmtStr:"-",
+                MainBufferRequestedMs=_cfg.MainBufMs, AuxBufferRequestedMs=_cfg.AuxBufMs,
                 MainBufferMs=_mainOut!=null?_mainBufEffectiveMs:0, AuxBufferMs=_auxOut!=null?_auxBufEffectiveMs:0,
                 MainDefaultPeriodMs=_defMainMs, MainMinimumPeriodMs=_minMainMs, AuxDefaultPeriodMs=_defAuxMs, AuxMinimumPeriodMs=_minAuxMs,
-                MainNoSRC=_mainNoSRC, AuxNoSRC=_auxNoSRC, MainResampling=_mainResampling, AuxResampling=_auxResampling
+                MainAlignedMultiple=mainMul, AuxAlignedMultiple=auxMul,
+                MainNoSRC=_mainNoSRC, AuxNoSRC=_auxNoSRC, MainResampling=_mainResampling, AuxResampling=_auxResampling,
+                MainBufferMultiple=(_mainBufEffectiveMs>0 && _minMainMs>0)? _mainBufEffectiveMs/_minMainMs:0,
+                AuxBufferMultiple =(_auxBufEffectiveMs >0 && _minAuxMs >0)? _auxBufEffectiveMs /_minAuxMs:0
             };
         }
 
