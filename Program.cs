@@ -1,3 +1,4 @@
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -76,12 +77,6 @@ namespace MirrorAudio
         [DataMember] public InputFormatStrategy InputFormatStrategy = InputFormatStrategy.SystemMix;
         [DataMember] public int InputCustomSampleRate = 96000; // 当 Strategy=Custom 时生效
         [DataMember] public int InputCustomBitDepth  = 24;     // 16/24/32(=float)
-
-        // —— 新增：缓冲策略开关（主/副） —— //
-        [DataMember] public bool MainStrictAlign = false;   // 严格周期对齐
-        [DataMember] public bool MainManualLimit = false;   // 手动极限（按输入值就近取整，并设置安全线）
-        [DataMember] public bool AuxStrictAlign  = false;
-        [DataMember] public bool AuxManualLimit  = false;
     }
 
     // —— 状态 —— //
@@ -270,7 +265,7 @@ namespace MirrorAudio
                 if(SupportsExclusive(_outMain,desiredMain)){
                     bool needRateChange = (inFmt.SampleRate!=desiredMain.SampleRate) || (inFmt.Channels!=desiredMain.Channels);
                     if(needRateChange) _srcMain=_resMain=new MediaFoundationResampler(_bufMain,desiredMain){ ResamplerQuality=50 };
-                    int ms=ComputeBufferMs(true, true, _cfg.MainBufMs, _defMainMs, _minMainMs);
+                    int ms=Buf(_cfg.MainBufMs,true,_defMainMs,_minMainMs);
                     _mainOut=CreateOut(_outMain,AudioClientShareMode.Exclusive,_cfg.MainSync,ms,_srcMain,out _mainEventSyncUsed);
                     if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(desiredMain); mainTargetFmt=desiredMain; _mainResampling = needRateChange; _mainNoSRC = !needRateChange; }
                 }
@@ -279,7 +274,7 @@ namespace MirrorAudio
                     if(SupportsExclusive(_outMain,fmt32)){
                         bool needRateChange = (inFmt.SampleRate!=fmt32.SampleRate) || (inFmt.Channels!=fmt32.Channels);
                         _srcMain=_resMain=new MediaFoundationResampler(_bufMain,fmt32){ ResamplerQuality=50 };
-                        int ms=ComputeBufferMs(true, true, _cfg.MainBufMs, _defMainMs, _minMainMs);
+                        int ms=Buf(_cfg.MainBufMs,true,_defMainMs,_minMainMs);
                         _mainOut=CreateOut(_outMain,AudioClientShareMode.Exclusive,_cfg.MainSync,ms,_srcMain,out _mainEventSyncUsed);
                         if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(fmt32); mainTargetFmt=fmt32; _mainResampling = needRateChange; _mainNoSRC = !needRateChange; }
                     }
@@ -288,7 +283,7 @@ namespace MirrorAudio
             }
             if(_mainOut==null)
             {
-                int ms=ComputeBufferMs(false, true, _cfg.MainBufMs, _defMainMs, _minMainMs);
+                int ms=Buf(_cfg.MainBufMs,false,_defMainMs);
                 _mainOut=CreateOut(_outMain,AudioClientShareMode.Shared,_cfg.MainSync,ms,_bufMain,out _mainEventSyncUsed);
                 if(_mainOut==null){ MessageBox.Show("主通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
                 _mainBufEffectiveMs=ms; try{ mainTargetFmt=_outMain.AudioClient.MixFormat; _mainFmtStr=Fmt(mainTargetFmt);}catch{ _mainFmtStr="系统混音"; }
@@ -311,7 +306,7 @@ namespace MirrorAudio
                 if(SupportsExclusive(_outAux,desiredAux)){
                     bool needRateChange = (inFmt.SampleRate!=desiredAux.SampleRate) || (inFmt.Channels!=desiredAux.Channels);
                     if(needRateChange) _srcAux=_resAux=new MediaFoundationResampler(_bufAux,desiredAux){ ResamplerQuality=40 };
-                    int ms=ComputeBufferMs(true, false, _cfg.AuxBufMs, _defAuxMs, _minAuxMs);
+                    int ms=Buf(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs);
                     _auxOut=CreateOut(_outAux,AudioClientShareMode.Exclusive,_cfg.AuxSync,ms,_srcAux,out _auxEventSyncUsed);
                     if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(desiredAux); auxTargetFmt=desiredAux; _auxResampling=needRateChange; _auxNoSRC=!needRateChange; }
                 }
@@ -320,7 +315,7 @@ namespace MirrorAudio
                     if(SupportsExclusive(_outAux,fmt32)){
                         bool needRateChange = (inFmt.SampleRate!=fmt32.SampleRate) || (inFmt.Channels!=fmt32.Channels);
                         _srcAux=_resAux=new MediaFoundationResampler(_bufAux,fmt32){ ResamplerQuality=40 };
-                        int ms=ComputeBufferMs(true, false, _cfg.AuxBufMs, _defAuxMs, _minAuxMs);
+                        int ms=Buf(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs);
                         _auxOut=CreateOut(_outAux,AudioClientShareMode.Exclusive,_cfg.AuxSync,ms,_srcAux,out _auxEventSyncUsed);
                         if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(fmt32); auxTargetFmt=fmt32; _auxResampling=needRateChange; _auxNoSRC=!needRateChange; }
                     }
@@ -329,7 +324,7 @@ namespace MirrorAudio
             }
             if(_auxOut==null)
             {
-                int ms=ComputeBufferMs(false, false, _cfg.AuxBufMs, _defAuxMs, _minAuxMs);
+                int ms=Buf(_cfg.AuxBufMs,false,_defAuxMs);
                 _auxOut=CreateOut(_outAux,AudioClientShareMode.Shared,_cfg.AuxSync,ms,_bufAux,out _auxEventSyncUsed);
                 if(_auxOut==null){ MessageBox.Show("副通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
                 _auxBufEffectiveMs=ms; try{ auxTargetFmt=_outAux.AudioClient.MixFormat; _auxFmtStr=Fmt(auxTargetFmt);}catch{ _auxFmtStr="系统混音"; }
@@ -416,217 +411,23 @@ return new StatusSnapshot{
             try{ foreach(var d in _mm.EnumerateAudioEndPoints(flow,DeviceState.Active)) if(d.ID==id) return d; }catch{}
             return null;
         }
-
-        // —— 显示容器位深 → 线缆位深 —— //
+        
         static string Fmt(WaveFormat wf)
         {
             if (wf == null) return "-";
-            string containerBits, effectiveBits;
-            if (wf.Encoding == WaveFormatEncoding.IeeeFloat)
-            {
-                containerBits = "32";
-                effectiveBits = "32f";
-            }
-            else
-            {
-                containerBits = wf.BitsPerSample.ToString();
-                effectiveBits = containerBits;
-                if (wf is WaveFormatExtensible wfe && wfe.ValidBitsPerSample > 0)
-                    effectiveBits = wfe.ValidBitsPerSample.ToString();
-            }
+            // 容器位深
+            string containerBits = (wf.Encoding == WaveFormatEncoding.IeeeFloat) ? "32" : wf.BitsPerSample.ToString();
+            // 线缆/有效位深：优先识别 float，其次通过反射尝试 /*ValidBitsPerSample*/，最后退回容器位深
+            string effectiveBits = (wf.Encoding == WaveFormatEncoding.IeeeFloat) ? "32f" : containerBits;
+            try {
+                var prop = wf.GetType().GetProperty("/*ValidBitsPerSample*/");
+                if (prop != null) {
+                    var vObj = prop.GetValue(wf, null);
+                    if (vObj != null) {
+                        int v = Convert.ToInt32(vObj);
+                        if (v > 0) effectiveBits = v.ToString();
+                    }
+                }
+            } catch {}
             return $"{wf.SampleRate}Hz/{containerBits}bit→{effectiveBits}bit/{wf.Channels}ch";
         }
-
-        void GetPeriods(MMDevice dev,out double defMs,out double minMs)
-        {
-            defMs=10; minMs=2; if(dev==null) return; var id=dev.ID; Tuple<double,double> t;
-            if(_periodCache.TryGetValue(id,out t)){ defMs=t.Item1; minMs=t.Item2; return; }
-            try{
-                long d100=0,m100=0; var ac=dev.AudioClient; var pD=ac.GetType().GetProperty("DefaultDevicePeriod"); var pM=ac.GetType().GetProperty("MinimumDevicePeriod");
-                if(pD!=null){ var v=pD.GetValue(ac,null); if(v!=null) d100=Convert.ToInt64(v); }
-                if(pM!=null){ var v=pM.GetValue(ac,null); if(v!=null) m100=Convert.ToInt64(v); }
-                if(d100>0) defMs=d100/10000.0; if(m100>0) minMs=m100/10000.0;
-            }catch{}
-            _periodCache[id]=Tuple.Create(defMs,minMs);
-        }
-
-        static bool SupportsExclusive(MMDevice d,WaveFormat f){ try{ return d.AudioClient.IsFormatSupported(AudioClientShareMode.Exclusive,f);}catch{ return false; } }
-
-        // 原默认缓冲策略
-        static int Buf(int want,bool exclusive,double defMs,double minMs=0)
-        {
-            int ms=want;
-            if(exclusive){ int floor=(int)Math.Ceiling(defMs*3.0); if(ms<floor) ms=floor; if(minMs>0){ double k=Math.Ceiling(ms/minMs); ms=(int)Math.Ceiling(k*minMs); } }
-            else{ int floor=(int)Math.Ceiling(defMs*2.0); if(ms<floor) ms=floor; }
-            return ms;
-        }
-
-        // —— 新增：手动极限（就近取整 + 安全线） —— //
-        static int ManualLimitBuf(int want, double defMs, double minMs)
-        {
-            double basePeriod = (minMs > 0 ? minMs : defMs);
-            if (basePeriod <= 0) return want;
-            int safe = (int)Math.Ceiling(basePeriod * 3.0);
-            int nearest = (int)Math.Round(want / basePeriod) * (int)Math.Round(basePeriod);
-            // 用更精确的方式避免累积误差
-            nearest = (int)Math.Round(Math.Round(want / basePeriod) * basePeriod);
-            if (nearest < safe) nearest = safe;
-            return nearest;
-        }
-
-        // —— 新增：严格周期对齐（向上取整到最小周期倍数 + 安全线） —— //
-        static int StrictAlignBuf(int want, double defMs, double minMs)
-        {
-            double basePeriod = (minMs > 0 ? minMs : defMs);
-            if (basePeriod <= 0) return want;
-            int safe = (int)Math.Ceiling(basePeriod * 3.0);
-            int k = (int)Math.Ceiling(want / basePeriod);
-            int ms = (int)Math.Round(k * basePeriod);
-            if (ms < safe) ms = safe;
-            return ms;
-        }
-
-        // —— 统一入口：根据主/副与独占/共享选择策略 —— //
-        int ComputeBufferMs(bool exclusive, bool isMain, int want, double defMs, double minMs)
-        {
-            bool manual = isMain ? _cfg.MainManualLimit : _cfg.AuxManualLimit;
-            bool strict = isMain ? _cfg.MainStrictAlign : _cfg.AuxStrictAlign;
-
-            if (manual) return ManualLimitBuf(want, defMs, exclusive ? minMs : defMs);
-            if (strict) return StrictAlignBuf(want, defMs, exclusive ? minMs : defMs);
-            // 默认策略
-            return Buf(want, exclusive, defMs, minMs);
-        }
-
-        WasapiOut CreateOut(MMDevice dev,AudioClientShareMode mode,SyncModeOption pref,int bufMs,IWaveProvider src,out bool eventUsed)
-        {
-            eventUsed=false; WasapiOut w;
-            if(pref==SyncModeOption.Polling) return TryOut(dev,mode,false,bufMs,src);
-            if(pref==SyncModeOption.Event){ w=TryOut(dev,mode,true,bufMs,src); if(w!=null){ eventUsed=true; return w; } return TryOut(dev,mode,false,bufMs,src); }
-            w=TryOut(dev,mode,true,bufMs,src); if(w!=null){ eventUsed=true; return w; } return TryOut(dev,mode,false,bufMs,src);
-        }
-        WasapiOut TryOut(MMDevice dev,AudioClientShareMode mode,bool ev,int ms,IWaveProvider src)
-        {
-            try{ var w=new WasapiOut(dev,mode,ev,ms); w.Init(src); if(Logger.Enabled) Logger.Info($"OK {dev.FriendlyName} | {mode} | {(ev?"event":"poll")} | {ms}ms"); return w; }
-            catch(Exception ex){ if(Logger.Enabled) Logger.Info($"Fail {dev.FriendlyName} | {mode} | {(ev?"event":"poll")} | {ms}ms | 0x{((uint)ex.HResult):X8} {ex.Message}"); return null; }
-        }
-
-        public void Dispose(){ Stop(); try{ _mm?.UnregisterEndpointNotificationCallback(this);}catch{} _debounce.Dispose(); _tray.Visible=false; _tray.Dispose(); _menu.Dispose(); }
-    }
-
-    // —— B 方案：环回输入格式协商助手 —— //
-    public sealed class InputFormatRequest
-    {
-        public InputFormatStrategy Strategy = InputFormatStrategy.SystemMix;
-        public int CustomSampleRate = 48000; // Strategy==Custom 时生效
-        public int CustomBitDepth   = 24;    // 16/24/32(=float)
-        public int Channels         = 2;
-    }
-
-    public static class InputFormatHelper
-    {
-        public static WaveFormat BuildWaveFormat(InputFormatStrategy strategy, int customRate, int customBits, int channels)
-        {
-            switch (strategy)
-            {
-                case InputFormatStrategy.SystemMix: return null; // null 表示“使用系统混音格式”
-                case InputFormatStrategy.Specify24_48000:  return CreatePcm24(48000, channels);
-                case InputFormatStrategy.Specify24_96000:  return CreatePcm24(96000, channels);
-                case InputFormatStrategy.Specify24_192000: return CreatePcm24(192000, channels);
-                case InputFormatStrategy.Specify32f_48000:  return WaveFormat.CreateIeeeFloatWaveFormat(48000, channels);
-                case InputFormatStrategy.Specify32f_96000:  return WaveFormat.CreateIeeeFloatWaveFormat(96000, channels);
-                case InputFormatStrategy.Specify32f_192000: return WaveFormat.CreateIeeeFloatWaveFormat(192000, channels);
-                case InputFormatStrategy.Custom:
-                    if (customBits >= 32) return WaveFormat.CreateIeeeFloatWaveFormat(customRate, channels);
-                    if (customBits == 24) return CreatePcm24(customRate, channels);
-                    return new WaveFormat(customRate, customBits, channels);
-                default: return null;
-            }
-        }
-
-        public static WaveFormat CreatePcm24(int sampleRate, int channels)
-        {
-            // 24-bit PCM（每样本3字节）
-            return WaveFormat.CreateCustomFormat(WaveFormatEncoding.Extensible, sampleRate, channels, sampleRate * channels * 3, 3, 24);
-        }
-
-        /// <summary>
-        /// 预检并协商环回格式（共享模式）。返回应设置给 WasapiLoopbackCapture 的 WaveFormat；
-        /// 若返回 null，表示“使用系统混音格式”。同时输出日志与（三元）规格。
-        /// </summary>
-        public static WaveFormat NegotiateLoopbackFormat(MMDevice device, InputFormatRequest request,
-            out string log, out WaveFormat mixFormat, out WaveFormat acceptedFormat, out WaveFormat requestedFormat)
-        {
-            var sb = new System.Text.StringBuilder();
-            mixFormat = null; acceptedFormat = null; requestedFormat = null;
-            try { mixFormat = device.AudioClient.MixFormat; } catch {}
-
-            var desired = BuildWaveFormat(request.Strategy, request.CustomSampleRate, request.CustomBitDepth, request.Channels);
-            requestedFormat = desired;
-            if (mixFormat != null) sb.AppendLine("Device Mix: " + Fmt(mixFormat));
-            if (desired == null)
-            {
-                sb.AppendLine("Request: SystemMix (use engine-provided mix).");
-                acceptedFormat = mixFormat;
-                log = sb.ToString();
-                return null;
-            }
-
-            WaveFormatExtensible closest=null;
-            bool ok=false;
-            try { ok = device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, desired, out closest); }
-            catch { ok = false; }
-
-            sb.AppendLine("Request: " + Fmt(desired) + " -> Supported: " + (ok ? "Yes" : "No"));
-            if (!ok && closest != null) sb.AppendLine("Closest: " + Fmt(closest));
-
-            if (ok)
-            {
-                acceptedFormat = desired;
-                log = sb.ToString();
-                return desired;
-            }
-
-            // 简单回退：24/96 -> 32f/48 -> SystemMix
-            var fallback1 = CreatePcm24(96000, desired.Channels);
-            var fallback2 = WaveFormat.CreateIeeeFloatWaveFormat(48000, desired.Channels);
-            try
-            {
-                if (device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, fallback1))
-                {
-                    sb.AppendLine("Fallback accepted: " + Fmt(fallback1));
-                    acceptedFormat = fallback1; log = sb.ToString(); return fallback1;
-                }
-                if (device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, fallback2))
-                {
-                    sb.AppendLine("Fallback accepted: " + Fmt(fallback2));
-                    acceptedFormat = fallback2; log = sb.ToString(); return fallback2;
-                }
-            }
-            catch {}
-
-            sb.AppendLine("All requested formats rejected; use SystemMix.");
-            acceptedFormat = mixFormat; log = sb.ToString();
-            return null; // 使用系统混音格式
-        }
-
-        public static string Fmt(WaveFormat f)
-        {
-            if (f == null) return "(SystemMix)";
-            string container, effective;
-            if (f.Encoding == WaveFormatEncoding.IeeeFloat)
-            {
-                container = "32";
-                effective = "32f";
-            }
-            else
-            {
-                container = f.BitsPerSample.ToString();
-                effective = container;
-                if (f is WaveFormatExtensible wfe && wfe.ValidBitsPerSample > 0)
-                    effective = wfe.ValidBitsPerSample.ToString();
-            }
-            return $"{f.SampleRate}Hz/{container}bit→{effective}bit/{f.Channels}ch";
-        }
-    }
-}
