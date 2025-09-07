@@ -240,7 +240,34 @@ namespace MirrorAudio
         // the rest of the playback pipeline is omitted here. You can integrate your existing
         // playback initialization code below this line, or keep using the previous full version.
 
-        // ——— Utilities ———
+        
+        void DisposeAll()
+        {
+            try { if (_capture != null) { _capture.StopRecording(); _capture.Dispose(); } } catch {}
+            _capture = null;
+            try { _mainOut?.Stop(); _mainOut?.Dispose(); } catch {}
+            _mainOut = null;
+            try { _auxOut?.Stop(); _auxOut?.Dispose(); } catch {}
+            _auxOut = null;
+            try { _resMain?.Dispose(); } catch {}
+            _resMain = null;
+            try { _resAux?.Dispose(); } catch {}
+            _resAux = null;
+            _bufMain = null; _bufAux = null;
+        }
+
+        public void Stop()
+        {
+            if (!_running) { DisposeAll(); return; }
+            try { _capture?.StopRecording(); } catch {}
+            try { _mainOut?.Stop(); } catch {}
+            try { _auxOut?.Stop(); } catch {}
+            Thread.Sleep(20);
+            DisposeAll();
+            _running = false;
+            try { _tray.ShowBalloonTip(600, "MirrorAudio", "已停止", ToolTipIcon.Info); } catch {}
+        }
+    // ——— Utilities ———
         string SafeName(string id, DataFlow flow)
         {
             if(string.IsNullOrEmpty(id)) return "-";
