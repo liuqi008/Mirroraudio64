@@ -489,7 +489,7 @@ namespace MirrorAudio
                 return null;
             }
 
-            WaveFormat closest=null;
+            WaveFormatExtensible closest=null;
             bool ok=false;
             try { ok = device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, desired, out closest); }
             catch { ok = false; }
