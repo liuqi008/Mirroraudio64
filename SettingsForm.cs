@@ -110,7 +110,7 @@ namespace MirrorAudio.AppContextApp
         {
             for (int i = 0; i < cmb.Items.Count; i++)
             {
-                if (((DevItem)cmb.Items[i]).Id == id)
+                if (cmb.Items[i] is DevItem dv && dv.Id == id)
                 { cmb.SelectedIndex = i; return; }
             }
             if (cmb.Items.Count > 0 && cmb.SelectedIndex < 0) cmb.SelectedIndex = 0;

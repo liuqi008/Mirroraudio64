@@ -115,194 +115,31 @@ namespace MirrorAudio.AppContextApp
     /// <summary>
     /// 轻量播放器：支持独占+RAW（IAudioClient3）+事件驱动，基于RenderClient手喂数据，不做重采样。
     /// </summary>
+    
+    /// <summary>
+    /// 轻量播放器封装：基于 NAudio.Wave.WasapiOut，支持独占/共享与事件驱动。
+    /// 说明：为了跨环境可编译与稳定运行，本封装不直接访问 IAudioClient3。
+    /// </summary>
     internal sealed class WasapiExclusivePlayer : IDisposable
     {
-        private readonly MMDevice _device;
-        private readonly IWaveProvider _source;
-        private readonly bool _exclusive;
-        private readonly bool _raw;
-        private readonly int _bufferMs;
-        private readonly WaveFormat _format;
-
-        private IAudioClient3? _client3;
-        private IAudioRenderClient? _render;
-        private EventWaitHandle? _event;
-        private Thread? _thread;
-        private bool _running;
+        private readonly WasapiOut _out;
 
         public WasapiExclusivePlayer(MMDevice device, WaveFormat format, bool exclusive, bool raw, int bufferMs, IWaveProvider source)
         {
-            _device = device;
-            _format = format;
-            _exclusive = exclusive;
-            _raw = raw;
-            _bufferMs = Math.Max(2, bufferMs);
-            _source = source;
+            // 注意：独占模式下本就绕过系统混音。RAW 对共享模式意义更大；
+            // 由于 NAudio 未稳定公开 RAW 旁路入口，此处先保证独占路径与事件驱动低延迟。
+            _out = new WasapiOut(device, exclusive ? AudioClientShareMode.Exclusive : AudioClientShareMode.Shared, true, bufferMs);
+            _out.Init(source);
         }
 
-        public void Start()
-        {
-            // COM接口
-            var clientObj = _device.AudioClient;
-            _client3 = (IAudioClient3)clientObj.ComInterface;
-
-            // RAW属性
-            if (_raw)
-            {
-                var props = new AudioClientProperties
-                {
-                    cbSize = (uint)Marshal.SizeOf<AudioClientProperties>(),
-                    bIsOffload = false,
-                    eCategory = AudioStreamCategory.Other,
-                    Options = AudioClientStreamOptions.Raw
-                };
-                _client3.SetClientProperties(ref props);
-            }
-
-            var shareMode = _exclusive ? AudioClientShareMode.Exclusive : AudioClientShareMode.Shared;
-            var streamFlags = AudioClientStreamFlags.EventCallback;
-
-            // 设置缓冲
-            long hnsBuffer = (long)_bufferMs * 10000; // ms -> 100ns
-
-            // 初始化（不做自动转换，格式必须设备可开）
-            _client3.Initialize(
-                shareMode,
-                streamFlags,
-                hnsBuffer,
-                hnsBuffer,
-                _format,
-                Guid.Empty);
-
-            // 事件 & 渲染客户端
-            _event = new EventWaitHandle(false, EventResetMode.AutoReset);
-            _client3.SetEventHandle(_event.SafeWaitHandle.DangerousGetHandle());
-
-            _render = (IAudioRenderClient)clientObj.AudioRenderClient;
-
-            // 计算帧大小
-            int blockAlign = _format.BlockAlign;
-            int bufferFrameCount = _client3.GetBufferSize();
-            int bufferBytes = bufferFrameCount * blockAlign;
-
-            _running = true;
-            _thread = new Thread(() => Pump(bufferFrameCount, bufferBytes, blockAlign)) { IsBackground = true, Priority = ThreadPriority.Highest };
-            _thread.Start();
-
-            _client3.Start();
-        }
-
-        private void Pump(int bufferFrames, int bufferBytes, int blockAlign)
-        {
-            byte[] temp = new byte[bufferBytes];
-            while (_running)
-            {
-                _event!.WaitOne(50);
-
-                int padding = _client3!.GetCurrentPadding();
-                int framesAvailable = bufferFrames - padding;
-                if (framesAvailable <= 0) continue;
-
-                int bytesNeeded = framesAvailable * blockAlign;
-                int read = _source.Read(temp, 0, Math.Min(bytesNeeded, temp.Length));
-
-                int framesToWrite = read / blockAlign;
-                if (framesToWrite <= 0) continue;
-
-                IntPtr pData = _render!.GetBuffer(framesToWrite);
-                Marshal.Copy(temp, 0, pData, framesToWrite * blockAlign);
-                _render.ReleaseBuffer(framesToWrite, AudioClientBufferFlags.None);
-            }
-        }
+        public void Start() => _out.Play();
 
         public void Dispose()
         {
-            try
-            {
-                _running = false;
-                try { _client3?.Stop(); } catch { }
-                if (_thread is not null && _thread.IsAlive) _thread.Join(200);
-            }
-            finally
-            {
-                _render = null;
-                _client3 = null;
-                _event?.Dispose();
-                _event = null;
-            }
+            try { _out?.Stop(); } catch {}
+            _out?.Dispose();
         }
     }
 
-    #region CoreAudio interop (IAudioClient3 / RAW)
-
-    [ComImport]
-    [Guid("7ED4EE07-8E67-4CD4-BE3C-DBFE46A8D338")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IAudioClient3
-    {
-        // IAudioClient methods
-        int Initialize(AudioClientShareMode ShareMode, AudioClientStreamFlags StreamFlags, long hnsBufferDuration, long hnsPeriodicity, [In] WaveFormat waveFormat, Guid AudioSessionGuid);
-        int GetBufferSize();
-        int GetStreamLatency(out long phnsLatency);
-        int GetCurrentPadding();
-        int IsFormatSupported(AudioClientShareMode ShareMode, [In] WaveFormat pFormat, IntPtr ppClosestMatch);
-        int GetMixFormat(out IntPtr ppDeviceFormat);
-        int GetDevicePeriod(out long phnsDefaultDevicePeriod, out long phnsMinimumDevicePeriod);
-        int Start();
-        int Stop();
-        int Reset();
-        int SetEventHandle(IntPtr eventHandle);
-        int GetService(ref Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object ppv);
-
-        // IAudioClient2/3
-        int SetClientProperties(ref AudioClientProperties pProperties);
-        int GetSharedModeEnginePeriod([In] WaveFormat pFormat, out int pDefaultPeriodInFrames, out int pFundamentalPeriodInFrames, out int pMinPeriodInFrames, out int pMaxPeriodInFrames);
-        int GetSharedModeEnginePeriod(out IntPtr ppFormat, out int pDefaultPeriodInFrames, out int pFundamentalPeriodInFrames, out int pMinPeriodInFrames, out int pMaxPeriodInFrames);
-        int InitializeSharedAudioStream(AudioClientStreamFlags StreamFlags, int PeriodInFrames, [In] WaveFormat pFormat, Guid AudioSessionGuid);
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct AudioClientProperties
-    {
-        public uint cbSize;
-        [MarshalAs(UnmanagedType.Bool)] public bool bIsOffload;
-        public AudioStreamCategory eCategory;
-        public AudioClientStreamOptions Options;
-    }
-
-    internal enum AudioClientStreamOptions
-    {
-        None = 0x0,
-        Raw = 0x1,
-        MatchFormat = 0x2
-    }
-
-    internal enum AudioStreamCategory
-    {
-        Other = 0,
-    }
-
-    [Flags]
-    internal enum AudioClientStreamFlags : int
-    {
-        None = 0x0,
-        EventCallback = 0x00040000,
-    }
-
-    [ComImport]
-    [Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IAudioRenderClient
-    {
-        IntPtr GetBuffer(int numFramesRequested);
-        void ReleaseBuffer(int numFramesWritten, AudioClientBufferFlags dwFlags);
-    }
-
-    [Flags]
-    internal enum AudioClientBufferFlags
-    {
-        None = 0x0
-    }
-
-    #endregion
+}
 }
