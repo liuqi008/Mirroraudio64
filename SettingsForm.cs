@@ -99,7 +99,9 @@ namespace MirrorAudio
             grpS.Controls.Add(tblS);
             grpS.Controls.Add(pBtns);
             left.Controls.Add(grpS);
-            split.Panel1.Controls.Add(left);
+            split.Panel1.Controls.Add(left)
+            ;
+            split.Panel2.Controls.Add(right);
 
             // 右：设置（设备 → 输入环回策略 → 主输出 → 副输出 → 其他）
             var right = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10) };
@@ -286,10 +288,10 @@ namespace MirrorAudio
             lblMainPass.Text = "直通=" + (s.MainNoSRC ? "是" : "否") + " | 重采样=" + (s.MainResampling ? "是" : "否");
             lblAuxPass.Text  = "直通=" + (s.AuxNoSRC  ? "是" : "否") + " | 重采样=" + (s.AuxResampling  ? "是" : "否");
 
-            lblMainBuf.Text = s.MainBufferMs>0 ? (s.MainBufferMs + " ms") : "-";
-            lblAuxBuf.Text  = s.AuxBufferMs >0 ? (s.AuxBufferMs  + " ms") : "-";
-            lblMainPer.Text = "默认 " + s.MainDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.MainMinimumPeriodMs.ToString("0.##") + " ms";
-            lblAuxPer.Text  = "默认 " + s.AuxDefaultPeriodMs .ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs .ToString("0.##") + " ms";
+            lblMainBuf.Text = (s.MainBufferRequestedMs>0 ? (s.MainBufferRequestedMs + " ms → ") : "") + (s.MainBufferMs>0 ? (s.MainBufferMs + " ms") : "-") + (s.MainBufferMultiple>0? (" ("+s.MainBufferMultiple.ToString("0.#")+"×最小)"):"");
+            lblAuxBuf.Text  = (s.AuxBufferRequestedMs>0 ? (s.AuxBufferRequestedMs + " ms → ") : "") + (s.AuxBufferMs>0 ? (s.AuxBufferMs + " ms") : "-") + (s.AuxBufferMultiple>0? (" ("+s.AuxBufferMultiple.ToString("0.#")+"×最小)"):"");
+            lblMainPer.Text = "默认 " + s.MainDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.MainMinimumPeriodMs.ToString("0.##") + " ms" + (s.MainAlignedMultiple>0 ? (" | 对齐≈" + s.MainAlignedMultiple.ToString("0.##") + "×") : "");
+            lblAuxPer.Text  = "默认 " + s.AuxDefaultPeriodMs .ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs .ToString("0.##") + " ms" + (s.AuxAlignedMultiple>0 ? (" | 对齐≈" + s.AuxAlignedMultiple.ToString("0.##") + "×") : "");
         }
 
         string BuildStatusText()
@@ -303,12 +305,12 @@ namespace MirrorAudio
             sb.AppendLine("主通道: " + (s.MainDevice??"-") + " | " + (s.MainMode??"-") + " | " + (s.MainSync??"-"));
             sb.AppendLine("主格式: " + (s.MainFormat??"-"));
             sb.AppendLine("主直通/重采样: 直通=" + (s.MainNoSRC ? "是" : "否") + " | 重采样=" + (s.MainResampling ? "是" : "否"));
-            sb.AppendLine("主缓冲: " + (s.MainBufferMs>0 ? (s.MainBufferMs + " ms") : "-"));
+            sb.AppendLine("主缓冲: " + (s.MainBufferRequestedMs>0?(s.MainBufferRequestedMs+" ms → "):"") + (s.MainBufferMs>0?(s.MainBufferMs+" ms"):"-") + (s.MainBufferMultiple>0?(" ("+s.MainBufferMultiple.ToString("0.#")+"×最小)"):""));
             sb.AppendLine("主周期: 默认 " + s.MainDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.MainMinimumPeriodMs.ToString("0.##") + " ms");
             sb.AppendLine("副通道: " + (s.AuxDevice??"-") + " | " + (s.AuxMode??"-") + " | " + (s.AuxSync??"-"));
             sb.AppendLine("副格式: " + (s.AuxFormat??"-"));
             sb.AppendLine("副直通/重采样: 直通=" + (s.AuxNoSRC ? "是" : "否") + " | 重采样=" + (s.AuxResampling ? "是" : "否"));
-            sb.AppendLine("副缓冲: " + (s.AuxBufferMs>0 ? (s.AuxBufferMs + " ms") : "-"));
+            sb.AppendLine("副缓冲: " + (s.AuxBufferRequestedMs>0?(s.AuxBufferRequestedMs+" ms → "):"") + (s.AuxBufferMs>0?(s.AuxBufferMs+" ms"):"-") + (s.AuxBufferMultiple>0?(" ("+s.AuxBufferMultiple.ToString("0.#")+"×最小)"):""));
             sb.AppendLine("副周期: 默认 " + s.AuxDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs.ToString("0.##") + " ms");
             return sb.ToString();
         }
