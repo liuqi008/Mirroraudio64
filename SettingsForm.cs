@@ -99,12 +99,11 @@ namespace MirrorAudio
             grpS.Controls.Add(tblS);
             grpS.Controls.Add(pBtns);
             left.Controls.Add(grpS);
-            split.Panel1.Controls.Add(left)
-            ;
-            split.Panel2.Controls.Add(right);
+            split.Panel1.Controls.Add(left);
 
             // 右：设置（设备 → 输入环回策略 → 主输出 → 副输出 → 其他）
             var right = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10) };
+            split.Panel2.Controls.Add(right);
 
             // 1) 设备
             var gDev = new GroupBox { Text = "设备（选择并枚举）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
