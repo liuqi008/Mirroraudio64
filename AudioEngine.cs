@@ -113,12 +113,12 @@ namespace MirrorAudio.AppContextApp
     }
 
     /// <summary>
-    /// 轻量播放器：支持独占+RAW（IAudioClient3）+事件驱动，基于RenderClient手喂数据，不做重采样。
+    /// 轻量播放器：支持独占+RAW（CoreAudio (raw)）+事件驱动，基于RenderClient手喂数据，不做重采样。
     /// </summary>
     
     /// <summary>
     /// 轻量播放器封装：基于 NAudio.Wave.WasapiOut，支持独占/共享与事件驱动。
-    /// 说明：为了跨环境可编译与稳定运行，本封装不直接访问 IAudioClient3。
+    /// 说明：为了跨环境可编译与稳定运行，本封装不直接访问 CoreAudio (raw)。
     /// </summary>
     internal sealed class WasapiExclusivePlayer : IDisposable
     {
