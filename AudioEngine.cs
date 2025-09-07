@@ -30,10 +30,19 @@ namespace MirrorAudio.AppContextApp
             if (!string.IsNullOrEmpty(_cfg.InputDeviceId))
             {
                 var inDev = _mm.GetDevice(_cfg.InputDeviceId);
-                _capture = new WasapiCapture(inDev, false, 10);
-                _capture.ShareMode = AudioClientShareMode.Shared;
-                _capture.StartRecording();
-                inputFormat = _capture.WaveFormat;
+                var cap = new WasapiCapture(inDev, false, 10);
+                cap.ShareMode = AudioClientShareMode.Shared;
+                cap.StartRecording();
+                _capture = cap;
+                inputFormat = cap.WaveFormat;
+            }
+            else
+            {
+                var defaultRender = _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var cap = new WasapiLoopbackCapture(defaultRender);
+                cap.StartRecording();
+                _capture = cap;
+                inputFormat = cap.WaveFormat;
             }
             else
             {

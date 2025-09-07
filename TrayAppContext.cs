@@ -39,7 +39,7 @@ namespace MirrorAudio.AppContextApp
             if (AppSettings.Load().AutoStart)
             {
                 // 延迟启动，避免首次初始化占用UI线程
-                var t = new Timer { Interval = 500 };
+                var t = new System.Windows.Forms.Timer { Interval = 500 };
                 t.Tick += (_, __) => { t.Stop(); t.Dispose(); Start(); };
                 t.Start();
             }

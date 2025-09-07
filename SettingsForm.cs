@@ -113,15 +113,15 @@ namespace MirrorAudio.AppContextApp
                 if (((DevItem)cmb.Items[i]).Id == id)
                 { cmb.SelectedIndex = i; return; }
             }
-            if (cmb.Items.Count > 0) cmb.SelectedIndex = 0;
+            if (cmb.Items.Count > 0 && cmb.SelectedIndex < 0) cmb.SelectedIndex = 0;
         }
 
         private void Save()
         {
             var cfg = AppSettings.Load();
-            cfg.InputDeviceId = ((DevItem)cmbInput.SelectedItem).Id;
-            cfg.MainDeviceId = ((DevItem)cmbMain.SelectedItem).Id;
-            cfg.AuxDeviceId = ((DevItem)cmbAux.SelectedItem).Id;
+            cfg.InputDeviceId = (cmbInput.SelectedItem is DevItem diIn) ? diIn.Id : null;
+            cfg.MainDeviceId = (cmbMain.SelectedItem is DevItem diMain) ? diMain.Id : null;
+            cfg.AuxDeviceId = (cmbAux.SelectedItem is DevItem diAux) ? diAux.Id : null;
 
             cfg.MainExclusive = chkMainExclusive.Checked;
             cfg.MainRaw = chkMainRaw.Checked;
