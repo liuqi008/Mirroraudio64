@@ -219,8 +219,10 @@ namespace MirrorAudio
             WaveFormat inputRequested=null, inputAccepted=null, inputMix=null;
 
             
+            
             if(_inDev.DataFlow==DataFlow.Capture)
             {
+                // —— 录音设备：优先独占 —— //
                 _inRoleStr="录音";
                 try{ inputMix=_inDev.AudioClient.MixFormat; }catch{}
 
@@ -231,7 +233,6 @@ namespace MirrorAudio
                     Channels = 2
                 };
 
-                // 先试独占
                 WasapiCapture cap = null;
                 string negoLog="-";
                 WaveFormat acc=null, reqFmt=null;
@@ -257,11 +258,7 @@ namespace MirrorAudio
                 _inAccStr = InputFormatHelper.Fmt(acc ?? inFmt);
                 _inMixStr = (_capture.ShareMode==AudioClientShareMode.Exclusive) ? "(Exclusive)" : InputFormatHelper.Fmt(inputMix);
             }
-    ;
-                _capture=cap; inFmt=cap.WaveFormat; _inRoleStr="录音";
-                try{ inputMix=_inDev.AudioClient.MixFormat; }catch{}
-                _inReqStr="录音-系统混音"; _inAccStr=Fmt(inFmt); _inMixStr=Fmt(inputMix);
-            }
+
             else
             {
                 // —— 环回设备：按策略请求指定格式（B 方案） —— //
