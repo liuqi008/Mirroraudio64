@@ -234,6 +234,7 @@ namespace MirrorAudio
                 };
 
                 WasapiCapture cap = null;
+                bool inExclusive = false;
                 string negoLog="-";
                 WaveFormat acc=null, reqFmt=null;
                 var wfEx = InputFormatHelper.NegotiateCaptureFormat(_inDev, req, AudioClientShareMode.Exclusive, out negoLog, out acc, out reqFmt);
@@ -241,7 +242,7 @@ namespace MirrorAudio
                 if (wfEx != null)
                 {
                     try{
-                        cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Exclusive };
+                        cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Exclusive }; inExclusive = true;
                         cap.WaveFormat = wfEx;
                     }catch{ cap = null; }
                 }
@@ -256,7 +257,7 @@ namespace MirrorAudio
                 _capture=cap; inFmt=cap.WaveFormat;
                 _inReqStr = InputFormatHelper.Fmt(reqFmt);
                 _inAccStr = InputFormatHelper.Fmt(acc ?? inFmt);
-                _inMixStr = (_capture.ShareMode==AudioClientShareMode.Exclusive) ? "(Exclusive)" : InputFormatHelper.Fmt(inputMix);
+                _inMixStr = inExclusive ? "(Exclusive)" : InputFormatHelper.Fmt(inputMix);
             }
 
             else
@@ -492,7 +493,7 @@ return new StatusSnapshot{
         static int AlignUpToMultiple(double value, double step)
         {
             if (step <= 0) return (int)Math.Ceiling(value);
-            double k = Math.Ceiling(Math.Ceil(value / step)); // typo guard
+            double k = Math.Ceiling(Math.Ceiling(value / step)); // typo guard
             return (int)Math.Ceiling(Math.Ceiling(value / step) * step);
         }
         static int BufAligned(int wantMs, bool exclusive, double defMs, double minMs, BufferAlignMode mode)
