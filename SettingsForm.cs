@@ -25,7 +25,7 @@ namespace MirrorAudio
                           cmbShareMain=new ComboBox(), cmbSyncMain=new ComboBox(),
                           cmbShareAux=new ComboBox(),  cmbSyncAux=new ComboBox();
 
-        // 新增：缓冲对齐模式
+        // 缓冲对齐模式
         readonly ComboBox cmbBufModeMain = new ComboBox();
         readonly ComboBox cmbBufModeAux  = new ComboBox();
 
@@ -180,7 +180,7 @@ namespace MirrorAudio
             AddRow(tMain, "位深 (bit，仅独占)",  numBitsMain);
             AddRow(tMain, "缓冲 (ms)",            numBufMain);
             cmbBufModeMain.DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbBufModeMain.Items.AddRange(new object[]{ "默认对齐", "手动极限" });
+            cmbBufModeMain.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
             AddRow(tMain, "缓冲对齐模式",  cmbBufModeMain);
 
             gMain.Controls.Add(tMain);
@@ -207,7 +207,7 @@ namespace MirrorAudio
             AddRow(tAux, "位深 (bit，仅独占)",  numBitsAux);
             AddRow(tAux, "缓冲 (ms)",            numBufAux);
             cmbBufModeAux.DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbBufModeAux.Items.AddRange(new object[]{ "默认对齐", "手动极限" });
+            cmbBufModeAux.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
             AddRow(tAux, "缓冲对齐模式",  cmbBufModeAux);
 
             gAux.Controls.Add(tAux);
@@ -271,18 +271,16 @@ namespace MirrorAudio
             numBufMain.Value  = Clamp(cur.MainBufMs, (int)numBufMain.Minimum,  (int)numBufMain.Maximum);
             cmbShareMain.SelectedIndex = cur.MainShare==ShareModeOption.Auto?0:(cur.MainShare==ShareModeOption.Exclusive?1:2);
             cmbSyncMain .SelectedIndex = cur.MainSync ==SyncModeOption .Auto?0:(cur.MainSync ==SyncModeOption .Event     ?1:2);
+            cmbBufModeMain.SelectedIndex = cur.MainBufMode==BufferAlignMode.MinAlign ? 1 : 0;
 
-            
-            cmbBufModeMain.SelectedIndex = cur.MainBufMode==BufferAlignMode.ManualExtreme ? 1 : 0;
-        numRateAux.Value  = Clamp(cur.AuxRate,   (int)numRateAux.Minimum,  (int)numRateAux.Maximum);
+            numRateAux.Value  = Clamp(cur.AuxRate,   (int)numRateAux.Minimum,  (int)numRateAux.Maximum);
             numBitsAux.Value  = Clamp(cur.AuxBits,   (int)numBitsAux.Minimum,  (int)numBitsAux.Maximum);
             numBufAux.Value   = Clamp(cur.AuxBufMs,  (int)numBufAux.Minimum,   (int)numBufAux.Maximum);
             cmbShareAux.SelectedIndex = cur.AuxShare==ShareModeOption.Auto?0:(cur.AuxShare==ShareModeOption.Exclusive?1:2);
             cmbSyncAux .SelectedIndex = cur.AuxSync ==SyncModeOption .Auto?0:(cur.AuxSync ==SyncModeOption .Event     ?1:2);
+            cmbBufModeAux.SelectedIndex = cur.AuxBufMode==BufferAlignMode.MinAlign ? 1 : 0;
 
-            
-            cmbBufModeAux.SelectedIndex = cur.AuxBufMode==BufferAlignMode.ManualExtreme ? 1 : 0;
-        chkAutoStart.Checked = cur.AutoStart;
+            chkAutoStart.Checked = cur.AutoStart;
             chkLogging.Checked   = cur.EnableLogging;
         }
 
@@ -413,13 +411,13 @@ namespace MirrorAudio
                 MainRate  = (int)numRateMain.Value,
                 MainBits  = (int)numBitsMain.Value,
                 MainBufMs = (int)numBufMain.Value,
-                MainBufMode = (cmbBufModeMain.SelectedIndex==1 ? BufferAlignMode.ManualExtreme : BufferAlignMode.DefaultAlign),
+                MainBufMode = (cmbBufModeMain.SelectedIndex==1 ? BufferAlignMode.MinAlign : BufferAlignMode.DefaultAlign),
                 AuxShare  = shareAux,
                 AuxSync   = syncAux,
                 AuxRate   = (int)numRateAux.Value,
                 AuxBits   = (int)numBitsAux.Value,
                 AuxBufMs  = (int)numBufAux.Value,
-                AuxBufMode = (cmbBufModeAux.SelectedIndex==1 ? BufferAlignMode.ManualExtreme : BufferAlignMode.DefaultAlign),
+                AuxBufMode = (cmbBufModeAux.SelectedIndex==1 ? BufferAlignMode.MinAlign : BufferAlignMode.DefaultAlign),
                 AutoStart = chkAutoStart.Checked,
                 EnableLogging = chkLogging.Checked,
 
