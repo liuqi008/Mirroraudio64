@@ -220,9 +220,9 @@ namespace MirrorAudio
 
             
             
+            
             if(_inDev.DataFlow==DataFlow.Capture)
             {
-                // —— 录音设备：优先独占 —— //
                 _inRoleStr="录音";
                 try{ inputMix=_inDev.AudioClient.MixFormat; }catch{}
 
@@ -233,57 +233,30 @@ namespace MirrorAudio
                     Channels = 2
                 };
 
-                WasapiCapture cap = null;
-                bool inExclusive = false;
-                string negoLog="-";
-                WaveFormat acc=null, reqFmt=null;
-                var wfEx = InputFormatHelper.NegotiateCaptureFormat(_inDev, req, AudioClientShareMode.Exclusive, out negoLog, out acc, out reqFmt);
-                if(Logger.Enabled) Logger.Info("Capture negotiation (Exclusive):\r\n"+negoLog);
-                if (wfEx != null)
-                {
-                    try{
-                        cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Exclusive }; inExclusive = true;
-                        cap.WaveFormat = wfEx;
-                    }catch{ cap = null; }
-                }
+                bool inExclusive=false;
+                WasapiCapture cap = TryCreateExclusiveCapture(_inDev, req, out inExclusive);
+
+                // 如果独占失败，自动互换位深(16<->24)再试一次独占
                 if (cap == null)
                 {
-
-                // 如果独占失败，尝试同采样率在 16/24 位深之间互换一次（不少虚拟线只支持其中一种）
-                if (cap == null)
-                {
-                    try{
-                        int rate = req.CustomSampleRate>0 ? req.CustomSampleRate : 192000;
-                        int bits = (req.CustomBitDepth==24) ? 16 : 24;
-                        var altReq = new InputFormatRequest{
-                            Strategy = InputFormatStrategy.Custom,
-                            CustomSampleRate = rate,
-                            CustomBitDepth = bits,
-                            Channels = 2
-                        };
-                        WaveFormat acc2=null, req2=null; string log2="-";
-                        var wfAlt = InputFormatHelper.NegotiateCaptureFormat(_inDev, altReq, AudioClientShareMode.Exclusive, out log2, out acc2, out req2);
-                        if(Logger.Enabled) Logger.Info("Capture negotiation (Exclusive Alt "+bits+"bit):\\r\\n"+log2);
-                        if (wfAlt != null)
-                        {
-                            try{
-                                cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Exclusive };
-                                cap.WaveFormat = wfAlt; inExclusive = true;
-                            }catch{ cap = null; }
-                        }
-                    }catch{}
+                    int rate = req.CustomSampleRate>0 ? req.CustomSampleRate : 192000;
+                    int altBits = (req.CustomBitDepth==24 ? 16 : 24);
+                    var altReq = new InputFormatRequest{ Strategy=InputFormatStrategy.Custom, CustomSampleRate=rate, CustomBitDepth=altBits, Channels=2 };
+                    cap = TryCreateExclusiveCapture(_inDev, altReq, out inExclusive);
                 }
 
-                    var wfSh = InputFormatHelper.NegotiateCaptureFormat(_inDev, req, AudioClientShareMode.Shared, out negoLog, out acc, out reqFmt);
-                    if(Logger.Enabled) Logger.Info("Capture negotiation (Shared):\r\n"+negoLog);
+                // 最终回退共享
+                if (cap == null)
+                {
+                    string log="-"; WaveFormat acc=null, reqFmt=null;
+                    var wfSh = InputFormatHelper.NegotiateCaptureFormat(_inDev, req, AudioClientShareMode.Shared, out log, out acc, out reqFmt);
+                    if(Logger.Enabled) Logger.Info("Capture negotiation (Shared):\r\n"+log);
                     cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Shared };
                     if (wfSh != null) cap.WaveFormat = wfSh;
                 }
 
                 _capture=cap; inFmt=cap.WaveFormat;
-                _inReqStr = InputFormatHelper.Fmt(reqFmt);
-                _inAccStr = InputFormatHelper.Fmt(acc ?? inFmt);
-                _inMixStr = inExclusive ? "(Exclusive)" : (InputFormatHelper.Fmt(inputMix) + "  [共享：独占被驱动拒绝或不支持该格式]");
+                _inMixStr = inExclusive ? "(Exclusive)" : InputFormatHelper.Fmt(inputMix);
             }
 
             else
@@ -511,67 +484,59 @@ return new StatusSnapshot{
 
         static bool SupportsExclusive(MMDevice d,WaveFormat f){ try{ return d.AudioClient.IsFormatSupported(AudioClientShareMode.Exclusive,f);}catch{ return false; } }
         
-        static int RoundToMultiple(double value, double step)
-        {
-            if (step <= 0) return (int)Math.Round(value);
-            return (int)Math.Round(Math.Round(value / step, 2) * step);
-        }
+        
+        // ===== Buffer alignment helpers =====
         static int AlignUpToMultiple(double value, double step)
         {
             if (step <= 0) return (int)Math.Ceiling(value);
-            double k = Math.Ceiling(Math.Ceiling(value / step)); // typo guard
-            return (int)Math.Ceiling(Math.Ceiling(value / step) * step);
+            double n = Math.Ceiling(value / step);
+            return (int)Math.Ceiling(n * step);
         }
         static int BufAligned(int wantMs, bool exclusive, double defMs, double minMs, BufferAlignMode mode)
         {
-            // v5 semantics:
             // Exclusive:
-            //   - MinAlign: step=minMs; floor=3×minMs
-            //   - DefaultAlign: step=defMs; floor=3×defMs
+            //   MinAlign: step=min, floor=3*min
+            //   DefaultAlign: step=def, floor=3*def
             // Shared:
-            //   - MinAlign: step=minMs (fallback to def if 0); floor=2×defMs
-            //   - DefaultAlign: step=defMs; floor=2×defMs
+            //   MinAlign: step=min (fallback def), floor=2*def
+            //   DefaultAlign: step=def, floor=2*def
+            double stepMin = (minMs > 0 ? minMs : (defMs > 0 ? defMs : 10.0));
+            double stepDef = (defMs > 0 ? defMs : stepMin);
+            int ms;
             if (exclusive)
             {
-                double stepMin = (minMs > 0 ? minMs : (defMs > 0 ? defMs : 10.0));
-                double stepDef = (defMs > 0 ? defMs : stepMin);
-                int ms;
                 if (mode == BufferAlignMode.MinAlign)
                 {
-                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
+                    ms = AlignUpToMultiple(wantMs, stepMin);
                     double floor = stepMin * 3.0;
-                    if (ms < floor) ms = (int)Math.Ceiling(Math.Ceiling(floor / stepMin) * stepMin);
-                    return ms;
+                    if (ms < floor) ms = AlignUpToMultiple(floor, stepMin);
                 }
                 else
                 {
-                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
+                    ms = AlignUpToMultiple(wantMs, stepDef);
                     double floor = stepDef * 3.0;
-                    if (ms < floor) ms = (int)Math.Ceiling(Math.Ceiling(floor / stepDef) * stepDef);
-                    return ms;
+                    if (ms < floor) ms = AlignUpToMultiple(floor, stepDef);
                 }
             }
             else
             {
-                double stepMin = (minMs > 0 ? minMs : (defMs > 0 ? defMs : 10.0));
-                double stepDef = (defMs > 0 ? defMs : stepMin);
-                int ms;
                 if (mode == BufferAlignMode.MinAlign)
                 {
-                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
+                    ms = AlignUpToMultiple(wantMs, stepMin);
                 }
                 else
                 {
-                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
+                    ms = AlignUpToMultiple(wantMs, stepDef);
                 }
-                double floor = (defMs > 0 ? defMs : stepMin) * 2.0;
-                if (ms < floor)
-                {
-                    double step = (mode==BufferAlignMode.MinAlign ? stepMin : stepDef);
-                    ms = (int)Math.Ceiling(Math.Ceiling(floor / step) * step);
-                }
-                return ms;
+                double floor = stepDef * 2.0;
+                if (ms < floor) ms = AlignUpToMultiple(floor, (mode==BufferAlignMode.MinAlign?stepMin:stepDef));
             }
+            return ms;
+        }
+        static int Buf(int wantMs,bool exclusive,double defMs,double minMs=0)
+        {
+            // Back-compat shim if any old calls remain
+            return BufAligned(wantMs, exclusive, defMs, minMs, BufferAlignMode.DefaultAlign);
         }
     static int Buf(int want,bool exclusive,double defMs,double minMs=0)
         {
@@ -606,7 +571,27 @@ return new StatusSnapshot{
         public int Channels         = 2;
     }
 
-    public static class InputFormatHelper
+    public static 
+        // Attempt to open a capture (recording) device in Exclusive mode with requested format.
+        // Returns the created WasapiCapture (or null) and sets inExclusive flag.
+        static WasapiCapture TryCreateExclusiveCapture(MMDevice dev, InputFormatRequest req, out bool inExclusive)
+        {
+            inExclusive = false;
+            try
+            {
+                string log="-"; WaveFormat acc=null, reqFmt=null;
+                var wf = InputFormatHelper.NegotiateCaptureFormat(dev, req, AudioClientShareMode.Exclusive, out log, out acc, out reqFmt);
+                if(Logger.Enabled) Logger.Info("Capture negotiation (Exclusive):\r\n"+log);
+                if (wf != null)
+                {
+                    var cap = new WasapiCapture(dev){ ShareMode = AudioClientShareMode.Exclusive };
+                    cap.WaveFormat = wf; inExclusive = true;
+                    return cap;
+                }
+            }catch{}
+            return null;
+        }
+    class InputFormatHelper
     {
         public static WaveFormat BuildWaveFormat(InputFormatStrategy strategy, int customRate, int customBits, int channels)
         {
