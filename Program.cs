@@ -248,6 +248,32 @@ namespace MirrorAudio
                 }
                 if (cap == null)
                 {
+
+                // 如果独占失败，尝试同采样率在 16/24 位深之间互换一次（不少虚拟线只支持其中一种）
+                if (cap == null)
+                {
+                    try{
+                        int rate = req.CustomSampleRate>0 ? req.CustomSampleRate : 192000;
+                        int bits = (req.CustomBitDepth==24) ? 16 : 24;
+                        var altReq = new InputFormatRequest{
+                            Strategy = InputFormatStrategy.Custom,
+                            CustomSampleRate = rate,
+                            CustomBitDepth = bits,
+                            Channels = 2
+                        };
+                        WaveFormat acc2=null, req2=null; string log2="-";
+                        var wfAlt = InputFormatHelper.NegotiateCaptureFormat(_inDev, altReq, AudioClientShareMode.Exclusive, out log2, out acc2, out req2);
+                        if(Logger.Enabled) Logger.Info("Capture negotiation (Exclusive Alt "+bits+"bit):\\r\\n"+log2);
+                        if (wfAlt != null)
+                        {
+                            try{
+                                cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Exclusive };
+                                cap.WaveFormat = wfAlt; inExclusive = true;
+                            }catch{ cap = null; }
+                        }
+                    }catch{}
+                }
+
                     var wfSh = InputFormatHelper.NegotiateCaptureFormat(_inDev, req, AudioClientShareMode.Shared, out negoLog, out acc, out reqFmt);
                     if(Logger.Enabled) Logger.Info("Capture negotiation (Shared):\r\n"+negoLog);
                     cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Shared };
@@ -257,7 +283,7 @@ namespace MirrorAudio
                 _capture=cap; inFmt=cap.WaveFormat;
                 _inReqStr = InputFormatHelper.Fmt(reqFmt);
                 _inAccStr = InputFormatHelper.Fmt(acc ?? inFmt);
-                _inMixStr = inExclusive ? "(Exclusive)" : InputFormatHelper.Fmt(inputMix);
+                _inMixStr = inExclusive ? "(Exclusive)" : (InputFormatHelper.Fmt(inputMix) + "  [共享：独占被驱动拒绝或不支持该格式]");
             }
 
             else
