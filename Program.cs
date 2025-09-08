@@ -63,6 +63,15 @@ namespace MirrorAudio
     }
 
     // —— 配置 —— //
+    
+    // —— 缓冲对齐模式 —— //
+    [DataContract]
+    public enum BufferAlignMode
+    {
+        [EnumMember] DefaultAlign,   // 以默认周期为基准，可为 2.5× 等非整数倍
+        [EnumMember] ManualExtreme   // 以基准周期整数倍贴合，例如 3×minPeriod = 9ms
+    }
+    
     [DataContract]
     public sealed class AppSettings
     {
@@ -72,6 +81,8 @@ namespace MirrorAudio
         [DataMember] public int MainRate=192000, MainBits=24, MainBufMs=12;
         [DataMember] public int AuxRate =48000,  AuxBits =16,  AuxBufMs =150;
         [DataMember] public bool AutoStart=false, EnableLogging=false;
+        [DataMember] public BufferAlignMode MainBufMode = BufferAlignMode.DefaultAlign;
+        [DataMember] public BufferAlignMode AuxBufMode  = BufferAlignMode.DefaultAlign;
 
         // —— 新增：输入环回格式策略（B 方案） —— //
         [DataMember] public InputFormatStrategy InputFormatStrategy = InputFormatStrategy.SystemMix;
@@ -245,8 +256,8 @@ namespace MirrorAudio
             _inFmtStr=Fmt(inFmt);
             if(Logger.Enabled) Logger.Info("Input: "+_inDev.FriendlyName+" | "+_inFmtStr+" | "+_inRoleStr);
 
-            _bufMain=new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true, BufferDuration=TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs*8,120)) };
-            _bufAux =new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true, BufferDuration=TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs *6,150)) };
+            _bufMain=new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true, BufferDuration=TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs*2.5, 40)) };
+            _bufAux =new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true, BufferDuration=TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs *3.5, 90)) };
 
             GetPeriods(_outMain,out _defMainMs,out _minMainMs); GetPeriods(_outAux,out _defAuxMs,out _minAuxMs);
 
@@ -265,7 +276,7 @@ namespace MirrorAudio
                 if(SupportsExclusive(_outMain,desiredMain)){
                     bool needRateChange = (inFmt.SampleRate!=desiredMain.SampleRate) || (inFmt.Channels!=desiredMain.Channels);
                     if(needRateChange) _srcMain=_resMain=new MediaFoundationResampler(_bufMain,desiredMain){ ResamplerQuality=50 };
-                    int ms=Buf(_cfg.MainBufMs,true,_defMainMs,_minMainMs);
+                    int ms=BufAligned(_cfg.MainBufMs,true,_defMainMs,_minMainMs,_cfg.MainBufMode);
                     _mainOut=CreateOut(_outMain,AudioClientShareMode.Exclusive,_cfg.MainSync,ms,_srcMain,out _mainEventSyncUsed);
                     if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(desiredMain); mainTargetFmt=desiredMain; _mainResampling = needRateChange; _mainNoSRC = !needRateChange; }
                 }
@@ -274,7 +285,7 @@ namespace MirrorAudio
                     if(SupportsExclusive(_outMain,fmt32)){
                         bool needRateChange = (inFmt.SampleRate!=fmt32.SampleRate) || (inFmt.Channels!=fmt32.Channels);
                         _srcMain=_resMain=new MediaFoundationResampler(_bufMain,fmt32){ ResamplerQuality=50 };
-                        int ms=Buf(_cfg.MainBufMs,true,_defMainMs,_minMainMs);
+                        int ms=BufAligned(_cfg.MainBufMs,true,_defMainMs,_minMainMs,_cfg.MainBufMode);
                         _mainOut=CreateOut(_outMain,AudioClientShareMode.Exclusive,_cfg.MainSync,ms,_srcMain,out _mainEventSyncUsed);
                         if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(fmt32); mainTargetFmt=fmt32; _mainResampling = needRateChange; _mainNoSRC = !needRateChange; }
                     }
@@ -283,7 +294,7 @@ namespace MirrorAudio
             }
             if(_mainOut==null)
             {
-                int ms=Buf(_cfg.MainBufMs,false,_defMainMs);
+                int ms=BufAligned(_cfg.MainBufMs,false,_defMainMs,0,_cfg.MainBufMode);
                 _mainOut=CreateOut(_outMain,AudioClientShareMode.Shared,_cfg.MainSync,ms,_bufMain,out _mainEventSyncUsed);
                 if(_mainOut==null){ MessageBox.Show("主通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
                 _mainBufEffectiveMs=ms; try{ mainTargetFmt=_outMain.AudioClient.MixFormat; _mainFmtStr=Fmt(mainTargetFmt);}catch{ _mainFmtStr="系统混音"; }
@@ -306,7 +317,7 @@ namespace MirrorAudio
                 if(SupportsExclusive(_outAux,desiredAux)){
                     bool needRateChange = (inFmt.SampleRate!=desiredAux.SampleRate) || (inFmt.Channels!=desiredAux.Channels);
                     if(needRateChange) _srcAux=_resAux=new MediaFoundationResampler(_bufAux,desiredAux){ ResamplerQuality=40 };
-                    int ms=Buf(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs);
+                    int ms=BufAligned(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs,_cfg.AuxBufMode);
                     _auxOut=CreateOut(_outAux,AudioClientShareMode.Exclusive,_cfg.AuxSync,ms,_srcAux,out _auxEventSyncUsed);
                     if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(desiredAux); auxTargetFmt=desiredAux; _auxResampling=needRateChange; _auxNoSRC=!needRateChange; }
                 }
@@ -315,7 +326,7 @@ namespace MirrorAudio
                     if(SupportsExclusive(_outAux,fmt32)){
                         bool needRateChange = (inFmt.SampleRate!=fmt32.SampleRate) || (inFmt.Channels!=fmt32.Channels);
                         _srcAux=_resAux=new MediaFoundationResampler(_bufAux,fmt32){ ResamplerQuality=40 };
-                        int ms=Buf(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs);
+                        int ms=BufAligned(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs,_cfg.AuxBufMode);
                         _auxOut=CreateOut(_outAux,AudioClientShareMode.Exclusive,_cfg.AuxSync,ms,_srcAux,out _auxEventSyncUsed);
                         if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(fmt32); auxTargetFmt=fmt32; _auxResampling=needRateChange; _auxNoSRC=!needRateChange; }
                     }
@@ -324,7 +335,7 @@ namespace MirrorAudio
             }
             if(_auxOut==null)
             {
-                int ms=Buf(_cfg.AuxBufMs,false,_defAuxMs);
+                int ms=BufAligned(_cfg.AuxBufMs,false,_defAuxMs,0,_cfg.AuxBufMode);
                 _auxOut=CreateOut(_outAux,AudioClientShareMode.Shared,_cfg.AuxSync,ms,_bufAux,out _auxEventSyncUsed);
                 if(_auxOut==null){ MessageBox.Show("副通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
                 _auxBufEffectiveMs=ms; try{ auxTargetFmt=_outAux.AudioClient.MixFormat; _auxFmtStr=Fmt(auxTargetFmt);}catch{ _auxFmtStr="系统混音"; }
@@ -334,7 +345,7 @@ namespace MirrorAudio
 
             _capture.DataAvailable+=OnIn; _capture.RecordingStopped+=OnStopRec;
             try{
-                _mainOut.Play(); _auxOut.Play(); _capture.StartRecording(); _running=true;
+                _capture.StartRecording(); _mainOut.Play(); _auxOut.Play(); _running=true;
                 if(Logger.Enabled){
                     Logger.Info("Main: "+(_mainIsExclusive?"独占":"共享")+" | "+(_mainEventSyncUsed?"事件":"轮询")+" | "+_mainBufEffectiveMs+"ms");
                     Logger.Info("Aux : "+(_auxIsExclusive ?"独占":"共享")+" | "+(_auxEventSyncUsed ?"事件":"轮询")+" | "+_auxBufEffectiveMs +"ms");
@@ -427,7 +438,38 @@ return new StatusSnapshot{
         }
 
         static bool SupportsExclusive(MMDevice d,WaveFormat f){ try{ return d.AudioClient.IsFormatSupported(AudioClientShareMode.Exclusive,f);}catch{ return false; } }
-        static int Buf(int want,bool exclusive,double defMs,double minMs=0)
+        
+        static int RoundToMultiple(double value, double step)
+        {
+            if (step <= 0) return (int)Math.Round(value);
+            return (int)Math.Round(Math.Round(value / step, 2) * step);
+        }
+        static int AlignUpToMultiple(double value, double step)
+        {
+            if (step <= 0) return (int)Math.Ceiling(value);
+            double k = Math.Ceiling(value / step);
+            return (int)Math.Ceiling(k * step);
+        }
+        static int BufAligned(int wantMs, bool exclusive, double defMs, double minMs, BufferAlignMode mode)
+        {
+            double baseMs = exclusive ? (minMs > 0 ? minMs : defMs) : defMs;
+            if (baseMs <= 0) baseMs = 10.0;
+            double floor = exclusive ? (defMs * 3.0) : (defMs * 2.0);
+            int ms;
+            if (mode == BufferAlignMode.ManualExtreme)
+            {
+                ms = RoundToMultiple(wantMs, baseMs);
+                if (ms < floor) ms = AlignUpToMultiple(floor, baseMs);
+            }
+            else
+            {
+                double n = wantMs / baseMs;
+                double tgt = Math.Max(n, exclusive ? 3.0 : 2.0) * baseMs;
+                ms = AlignUpToMultiple(tgt, baseMs);
+            }
+            return ms;
+        }
+    static int Buf(int want,bool exclusive,double defMs,double minMs=0)
         {
             int ms=want;
             if(exclusive){ int floor=(int)Math.Ceiling(defMs*3.0); if(ms<floor) ms=floor; if(minMs>0){ double k=Math.Ceiling(ms/minMs); ms=(int)Math.Ceiling(k*minMs); } }
