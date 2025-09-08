@@ -68,8 +68,8 @@ namespace MirrorAudio
     [DataContract]
     public enum BufferAlignMode
     {
-        [EnumMember] DefaultAlign,   // 以默认周期为基准，可为 2.5× 等非整数倍
-        [EnumMember] ManualExtreme   // 以基准周期整数倍贴合，例如 3×minPeriod = 9ms
+        [EnumMember] DefaultAlign,   // 默认对齐：以默认周期为基准（def），向上取整为整数倍
+        [EnumMember] MinAlign        // 最小对齐：以最小周期为基准（min），向上取整为整数倍
     }
     
     [DataContract]
@@ -218,10 +218,46 @@ namespace MirrorAudio
             WaveFormat inFmt;
             WaveFormat inputRequested=null, inputAccepted=null, inputMix=null;
 
+            
             if(_inDev.DataFlow==DataFlow.Capture)
             {
-                // 录音设备：沿用共享默认
-                var cap=new WasapiCapture(_inDev){ ShareMode=AudioClientShareMode.Shared };
+                _inRoleStr="录音";
+                try{ inputMix=_inDev.AudioClient.MixFormat; }catch{}
+
+                var req = new InputFormatRequest {
+                    Strategy = _cfg.InputFormatStrategy,
+                    CustomSampleRate = _cfg.InputCustomSampleRate,
+                    CustomBitDepth = _cfg.InputCustomBitDepth,
+                    Channels = 2
+                };
+
+                // 先试独占
+                WasapiCapture cap = null;
+                string negoLog="-";
+                WaveFormat acc=null, reqFmt=null;
+                var wfEx = InputFormatHelper.NegotiateCaptureFormat(_inDev, req, AudioClientShareMode.Exclusive, out negoLog, out acc, out reqFmt);
+                if(Logger.Enabled) Logger.Info("Capture negotiation (Exclusive):\r\n"+negoLog);
+                if (wfEx != null)
+                {
+                    try{
+                        cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Exclusive };
+                        cap.WaveFormat = wfEx;
+                    }catch{ cap = null; }
+                }
+                if (cap == null)
+                {
+                    var wfSh = InputFormatHelper.NegotiateCaptureFormat(_inDev, req, AudioClientShareMode.Shared, out negoLog, out acc, out reqFmt);
+                    if(Logger.Enabled) Logger.Info("Capture negotiation (Shared):\r\n"+negoLog);
+                    cap = new WasapiCapture(_inDev){ ShareMode = AudioClientShareMode.Shared };
+                    if (wfSh != null) cap.WaveFormat = wfSh;
+                }
+
+                _capture=cap; inFmt=cap.WaveFormat;
+                _inReqStr = InputFormatHelper.Fmt(reqFmt);
+                _inAccStr = InputFormatHelper.Fmt(acc ?? inFmt);
+                _inMixStr = (_capture.ShareMode==AudioClientShareMode.Exclusive) ? "(Exclusive)" : InputFormatHelper.Fmt(inputMix);
+            }
+    ;
                 _capture=cap; inFmt=cap.WaveFormat; _inRoleStr="录音";
                 try{ inputMix=_inDev.AudioClient.MixFormat; }catch{}
                 _inReqStr="录音-系统混音"; _inAccStr=Fmt(inFmt); _inMixStr=Fmt(inputMix);
@@ -256,8 +292,8 @@ namespace MirrorAudio
             _inFmtStr=Fmt(inFmt);
             if(Logger.Enabled) Logger.Info("Input: "+_inDev.FriendlyName+" | "+_inFmtStr+" | "+_inRoleStr);
 
-            _bufMain=new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true, BufferDuration=TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs*2.5, 40)) };
-            _bufAux =new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true, BufferDuration=TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs *3.5, 90)) };
+            _bufMain=new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true, BufferDuration=TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs*3.5, 60)) };
+            _bufAux =new BufferedWaveProvider(inFmt){ DiscardOnBufferOverflow=true, ReadFully=true, BufferDuration=TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs *4.0, 120)) };
 
             GetPeriods(_outMain,out _defMainMs,out _minMainMs); GetPeriods(_outAux,out _defAuxMs,out _minAuxMs);
 
@@ -345,7 +381,19 @@ namespace MirrorAudio
 
             _capture.DataAvailable+=OnIn; _capture.RecordingStopped+=OnStopRec;
             try{
-                _capture.StartRecording(); _mainOut.Play(); _auxOut.Play(); _running=true;
+                _capture.StartRecording();
+            try{
+                int waited=0;
+                int mainTarget = Math.Max( (int)(_cfg.MainBufMs*0.6), 20 );
+                int auxTarget  = Math.Max( (int)(_cfg.AuxBufMs *0.6), 40 );
+                for(; waited<300; waited+=5){
+                    var m = _bufMain != null ? _bufMain.BufferedDuration.TotalMilliseconds : 0;
+                    var a = _bufAux  != null ? _bufAux .BufferedDuration.TotalMilliseconds : 0;
+                    if(m>=mainTarget && a>=auxTarget) break;
+                    System.Threading.Thread.Sleep(5);
+                }
+            }catch{}
+            _mainOut.Play(); _auxOut.Play(); _running=true;
                 if(Logger.Enabled){
                     Logger.Info("Main: "+(_mainIsExclusive?"独占":"共享")+" | "+(_mainEventSyncUsed?"事件":"轮询")+" | "+_mainBufEffectiveMs+"ms");
                     Logger.Info("Aux : "+(_auxIsExclusive ?"独占":"共享")+" | "+(_auxEventSyncUsed ?"事件":"轮询")+" | "+_auxBufEffectiveMs +"ms");
@@ -447,27 +495,59 @@ return new StatusSnapshot{
         static int AlignUpToMultiple(double value, double step)
         {
             if (step <= 0) return (int)Math.Ceiling(value);
-            double k = Math.Ceiling(value / step);
-            return (int)Math.Ceiling(k * step);
+            double k = Math.Ceiling(Math.Ceil(value / step)); // typo guard
+            return (int)Math.Ceiling(Math.Ceiling(value / step) * step);
         }
         static int BufAligned(int wantMs, bool exclusive, double defMs, double minMs, BufferAlignMode mode)
         {
-            double baseMs = exclusive ? (minMs > 0 ? minMs : defMs) : defMs;
-            if (baseMs <= 0) baseMs = 10.0;
-            double floor = exclusive ? (defMs * 3.0) : (defMs * 2.0);
-            int ms;
-            if (mode == BufferAlignMode.ManualExtreme)
+            // v5 semantics:
+            // Exclusive:
+            //   - MinAlign: step=minMs; floor=3×minMs
+            //   - DefaultAlign: step=defMs; floor=3×defMs
+            // Shared:
+            //   - MinAlign: step=minMs (fallback to def if 0); floor=2×defMs
+            //   - DefaultAlign: step=defMs; floor=2×defMs
+            if (exclusive)
             {
-                ms = RoundToMultiple(wantMs, baseMs);
-                if (ms < floor) ms = AlignUpToMultiple(floor, baseMs);
+                double stepMin = (minMs > 0 ? minMs : (defMs > 0 ? defMs : 10.0));
+                double stepDef = (defMs > 0 ? defMs : stepMin);
+                int ms;
+                if (mode == BufferAlignMode.MinAlign)
+                {
+                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
+                    double floor = stepMin * 3.0;
+                    if (ms < floor) ms = (int)Math.Ceiling(Math.Ceiling(floor / stepMin) * stepMin);
+                    return ms;
+                }
+                else
+                {
+                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
+                    double floor = stepDef * 3.0;
+                    if (ms < floor) ms = (int)Math.Ceiling(Math.Ceiling(floor / stepDef) * stepDef);
+                    return ms;
+                }
             }
             else
             {
-                double n = wantMs / baseMs;
-                double tgt = Math.Max(n, exclusive ? 3.0 : 2.0) * baseMs;
-                ms = AlignUpToMultiple(tgt, baseMs);
+                double stepMin = (minMs > 0 ? minMs : (defMs > 0 ? defMs : 10.0));
+                double stepDef = (defMs > 0 ? defMs : stepMin);
+                int ms;
+                if (mode == BufferAlignMode.MinAlign)
+                {
+                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
+                }
+                else
+                {
+                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
+                }
+                double floor = (defMs > 0 ? defMs : stepMin) * 2.0;
+                if (ms < floor)
+                {
+                    double step = (mode==BufferAlignMode.MinAlign ? stepMin : stepDef);
+                    ms = (int)Math.Ceiling(Math.Ceiling(floor / step) * step);
+                }
+                return ms;
             }
-            return ms;
         }
     static int Buf(int want,bool exclusive,double defMs,double minMs=0)
         {
@@ -589,7 +669,59 @@ return new StatusSnapshot{
             return null; // 使用系统混音格式
         }
 
-        public static string Fmt(WaveFormat f)
+        
+        /// <summary>
+        /// 协商“录音设备”的格式（独占/共享）。返回应设置的 WaveFormat；返回 null 表示采用系统混音（共享）。
+        /// </summary>
+        public static WaveFormat NegotiateCaptureFormat(MMDevice device, InputFormatRequest request,
+            AudioClientShareMode mode, out string log, out WaveFormat acceptedFormat, out WaveFormat requestedFormat)
+        {
+            var sb = new System.Text.StringBuilder();
+            acceptedFormat = null; requestedFormat = null;
+            WaveFormat mixFormat = null;
+            try { mixFormat = device.AudioClient.MixFormat; } catch {}
+            if (mixFormat != null) sb.AppendLine("Device Mix: " + Fmt(mixFormat));
+
+            var desired = BuildWaveFormat(request.Strategy, request.CustomSampleRate, request.CustomBitDepth, request.Channels);
+            requestedFormat = desired;
+
+            if (desired == null)
+            {
+                sb.AppendLine("Request: SystemMix (engine).");
+                if (mode == AudioClientShareMode.Shared)
+                {
+                    acceptedFormat = mixFormat; log = sb.ToString();
+                    return null;
+                }
+                sb.AppendLine("Exclusive cannot use SystemMix directly.");
+                log = sb.ToString();
+                return null;
+            }
+
+            WaveFormatExtensible closest=null;
+            bool ok=false;
+            try { ok = device.AudioClient.IsFormatSupported(mode, desired, out closest); }
+            catch { ok = false; }
+
+            sb.AppendLine($"Request({mode}): " + Fmt(desired) + " -> Supported: " + (ok ? "Yes" : "No"));
+            if (!ok && closest != null) sb.AppendLine("Closest: " + Fmt(closest));
+
+            if (ok)
+            {
+                acceptedFormat = desired; log = sb.ToString();
+                return desired;
+            }
+
+            if (mode == AudioClientShareMode.Shared)
+            {
+                sb.AppendLine("All requested formats rejected; use SystemMix.");
+                acceptedFormat = mixFormat; log = sb.ToString();
+                return null;
+            }
+            log = sb.ToString();
+            return null;
+        }
+    public static string Fmt(WaveFormat f)
         {
             if (f == null) return "(SystemMix)";
             string bd = f.Encoding==WaveFormatEncoding.IeeeFloat ? "32f" : (f.BitsPerSample.ToString());
