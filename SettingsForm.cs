@@ -25,6 +25,10 @@ namespace MirrorAudio
                           cmbShareMain=new ComboBox(), cmbSyncMain=new ComboBox(),
                           cmbShareAux=new ComboBox(),  cmbSyncAux=new ComboBox();
 
+        // 新增：缓冲对齐模式
+        readonly ComboBox cmbBufModeMain = new ComboBox();
+        readonly ComboBox cmbBufModeAux  = new ComboBox();
+
         readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericUpDown(), numBufMain=new NumericUpDown(),
                                numRateAux =new NumericUpDown(), numBitsAux =new NumericUpDown(), numBufAux =new NumericUpDown();
 
@@ -105,63 +109,27 @@ namespace MirrorAudio
             var right = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10) };
             split.Panel2.Controls.Add(right);
 
-            // 5) 其他
-            var gOpt = new GroupBox { Text = "其他", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
-            var pOpt = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true };
-            chkAutoStart.Text = "Windows 自启动";
-            chkLogging.Text   = "启用日志（排障时开启）";
-            pOpt.Controls.Add(chkAutoStart);
-            pOpt.Controls.Add(chkLogging);
-            gOpt.Controls.Add(pOpt);
-            right.Controls.Add(gOpt);
+            // 1) 设备
+            var gDev = new GroupBox { Text = "设备（选择并枚举）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var tDev = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
 
-            // 4) 副输出
-            var gAux = new GroupBox { Text = "副输出（直播/采集卡）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
-            var tAux = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
-            tAux.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
-            tAux.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
+            cmbInput.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbMain.DropDownStyle  = ComboBoxStyle.DropDownList;
+            cmbAux.DropDownStyle   = ComboBoxStyle.DropDownList;
 
-            cmbShareAux.DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbSyncAux .DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbShareAux.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
-            cmbSyncAux .Items.AddRange(new object[] { "自动（事件优先）", "强制事件", "强制轮询" });
+            AddRow(tDev, "通道1 输入设备",  cmbInput);
+            AddRow(tDev, "通道2 主输出设备", cmbMain);
+            AddRow(tDev, "通道3 副输出设备", cmbAux);
 
-            numRateAux.Maximum = 384000;  numRateAux.Minimum = 44100;   numRateAux.Increment = 1000;
-            numBitsAux.Maximum = 32;      numBitsAux.Minimum = 16;      numBitsAux.Increment = 8;
-            numBufAux.Maximum  = 400;     numBufAux.Minimum  = 50;
-
-            AddRow(tAux, "模式",                cmbShareAux);
-            AddRow(tAux, "同步方式",            cmbSyncAux);
-            AddRow(tAux, "采样率 (Hz，仅独占)", numRateAux);
-            AddRow(tAux, "位深 (bit，仅独占)",  numBitsAux);
-            AddRow(tAux, "缓冲 (ms)",            numBufAux);
-
-            gAux.Controls.Add(tAux);
-            right.Controls.Add(gAux);
-
-            // 3) 主输出
-            var gMain = new GroupBox { Text = "主输出（高音质，低延迟）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
-            var tMain = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
-            tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
-            tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
-
-            cmbShareMain.DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbSyncMain .DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbShareMain.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
-            cmbSyncMain .Items.AddRange(new object[] { "自动（事件优先）", "强制事件", "强制轮询" });
-
-            numRateMain.Maximum = 384000; numRateMain.Minimum = 44100;  numRateMain.Increment = 1000;
-            numBitsMain.Maximum = 32;     numBitsMain.Minimum = 16;     numBitsMain.Increment = 8;
-            numBufMain.Maximum  = 200;    numBufMain.Minimum  = 4;
-
-            AddRow(tMain, "模式",                cmbShareMain);
-            AddRow(tMain, "同步方式",            cmbSyncMain);
-            AddRow(tMain, "采样率 (Hz，仅独占)", numRateMain);
-            AddRow(tMain, "位深 (bit，仅独占)",  numBitsMain);
-            AddRow(tMain, "缓冲 (ms)",            numBufMain);
-
-            gMain.Controls.Add(tMain);
-            right.Controls.Add(gMain);
+            btnReload.Text = "重新枚举设备";
+            btnReload.AutoSize = true;
+            btnReload.Click += (s, e) => LoadDevices();
+            tDev.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            tDev.Controls.Add(btnReload, 1, tDev.RowCount++);
+            gDev.Controls.Add(tDev);
+            right.Controls.Add(gDev);
 
             // 2) 输入环回格式策略（B 方案）
             var gIn = new GroupBox { Text = "输入（环回）格式策略", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
@@ -190,29 +158,71 @@ namespace MirrorAudio
 
             gIn.Controls.Add(tIn);
             right.Controls.Add(gIn);
-            
-            // 1) 设备
-            var gDev = new GroupBox { Text = "设备（选择并枚举）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
-            var tDev = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
-            tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
-            tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
 
-            cmbInput.DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbMain.DropDownStyle  = ComboBoxStyle.DropDownList;
-            cmbAux.DropDownStyle   = ComboBoxStyle.DropDownList;
+            // 3) 主输出
+            var gMain = new GroupBox { Text = "主输出（高音质，低延迟）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var tMain = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
 
-            AddRow(tDev, "通道1 输入设备",  cmbInput);
-            AddRow(tDev, "通道2 主输出设备", cmbMain);
-            AddRow(tDev, "通道3 副输出设备", cmbAux);
+            cmbShareMain.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbSyncMain .DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbShareMain.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
+            cmbSyncMain .Items.AddRange(new object[] { "自动（事件优先）", "强制事件", "强制轮询" });
 
-            btnReload.Text = "重新枚举设备";
-            btnReload.AutoSize = true;
-            btnReload.Click += (s, e) => LoadDevices();
-            tDev.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            tDev.Controls.Add(btnReload, 1, tDev.RowCount++);
-            gDev.Controls.Add(tDev);
-            right.Controls.Add(gDev);
-            
+            numRateMain.Maximum = 384000; numRateMain.Minimum = 44100;  numRateMain.Increment = 1000;
+            numBitsMain.Maximum = 32;     numBitsMain.Minimum = 16;     numBitsMain.Increment = 8;
+            numBufMain.Maximum  = 200;    numBufMain.Minimum  = 4;
+
+            AddRow(tMain, "模式",                cmbShareMain);
+            AddRow(tMain, "同步方式",            cmbSyncMain);
+            AddRow(tMain, "采样率 (Hz，仅独占)", numRateMain);
+            AddRow(tMain, "位深 (bit，仅独占)",  numBitsMain);
+            AddRow(tMain, "缓冲 (ms)",            numBufMain);
+            cmbBufModeMain.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbBufModeMain.Items.AddRange(new object[]{ "默认对齐", "手动极限" });
+            AddRow(tMain, "缓冲对齐模式",  cmbBufModeMain);
+
+            gMain.Controls.Add(tMain);
+            right.Controls.Add(gMain);
+
+            // 4) 副输出
+            var gAux = new GroupBox { Text = "副输出（直播/采集卡）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var tAux = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            tAux.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            tAux.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
+
+            cmbShareAux.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbSyncAux .DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbShareAux.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
+            cmbSyncAux .Items.AddRange(new object[] { "自动（事件优先）", "强制事件", "强制轮询" });
+
+            numRateAux.Maximum = 384000;  numRateAux.Minimum = 44100;   numRateAux.Increment = 1000;
+            numBitsAux.Maximum = 32;      numBitsAux.Minimum = 16;      numBitsAux.Increment = 8;
+            numBufAux.Maximum  = 400;     numBufAux.Minimum  = 50;
+
+            AddRow(tAux, "模式",                cmbShareAux);
+            AddRow(tAux, "同步方式",            cmbSyncAux);
+            AddRow(tAux, "采样率 (Hz，仅独占)", numRateAux);
+            AddRow(tAux, "位深 (bit，仅独占)",  numBitsAux);
+            AddRow(tAux, "缓冲 (ms)",            numBufAux);
+            cmbBufModeAux.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbBufModeAux.Items.AddRange(new object[]{ "默认对齐", "手动极限" });
+            AddRow(tAux, "缓冲对齐模式",  cmbBufModeAux);
+
+            gAux.Controls.Add(tAux);
+            right.Controls.Add(gAux);
+
+            // 5) 其他
+            var gOpt = new GroupBox { Text = "其他", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var pOpt = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true };
+            chkAutoStart.Text = "Windows 自启动";
+            chkLogging.Text   = "启用日志（排障时开启）";
+            pOpt.Controls.Add(chkAutoStart);
+            pOpt.Controls.Add(chkLogging);
+            gOpt.Controls.Add(pOpt);
+            right.Controls.Add(gOpt);
+
             // 底部按钮
             var pnlButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, Padding = new Padding(10), AutoSize = true };
             btnOk.Text = "保存"; btnCancel.Text = "取消";
@@ -262,13 +272,17 @@ namespace MirrorAudio
             cmbShareMain.SelectedIndex = cur.MainShare==ShareModeOption.Auto?0:(cur.MainShare==ShareModeOption.Exclusive?1:2);
             cmbSyncMain .SelectedIndex = cur.MainSync ==SyncModeOption .Auto?0:(cur.MainSync ==SyncModeOption .Event     ?1:2);
 
-            numRateAux.Value  = Clamp(cur.AuxRate,   (int)numRateAux.Minimum,  (int)numRateAux.Maximum);
+            
+            cmbBufModeMain.SelectedIndex = cur.MainBufMode==BufferAlignMode.ManualExtreme ? 1 : 0;
+        numRateAux.Value  = Clamp(cur.AuxRate,   (int)numRateAux.Minimum,  (int)numRateAux.Maximum);
             numBitsAux.Value  = Clamp(cur.AuxBits,   (int)numBitsAux.Minimum,  (int)numBitsAux.Maximum);
             numBufAux.Value   = Clamp(cur.AuxBufMs,  (int)numBufAux.Minimum,   (int)numBufAux.Maximum);
             cmbShareAux.SelectedIndex = cur.AuxShare==ShareModeOption.Auto?0:(cur.AuxShare==ShareModeOption.Exclusive?1:2);
             cmbSyncAux .SelectedIndex = cur.AuxSync ==SyncModeOption .Auto?0:(cur.AuxSync ==SyncModeOption .Event     ?1:2);
 
-            chkAutoStart.Checked = cur.AutoStart;
+            
+            cmbBufModeAux.SelectedIndex = cur.AuxBufMode==BufferAlignMode.ManualExtreme ? 1 : 0;
+        chkAutoStart.Checked = cur.AutoStart;
             chkLogging.Checked   = cur.EnableLogging;
         }
 
@@ -399,11 +413,13 @@ namespace MirrorAudio
                 MainRate  = (int)numRateMain.Value,
                 MainBits  = (int)numBitsMain.Value,
                 MainBufMs = (int)numBufMain.Value,
+                MainBufMode = (cmbBufModeMain.SelectedIndex==1 ? BufferAlignMode.ManualExtreme : BufferAlignMode.DefaultAlign),
                 AuxShare  = shareAux,
                 AuxSync   = syncAux,
                 AuxRate   = (int)numRateAux.Value,
                 AuxBits   = (int)numBitsAux.Value,
                 AuxBufMs  = (int)numBufAux.Value,
+                AuxBufMode = (cmbBufModeAux.SelectedIndex==1 ? BufferAlignMode.ManualExtreme : BufferAlignMode.DefaultAlign),
                 AutoStart = chkAutoStart.Checked,
                 EnableLogging = chkLogging.Checked,
 
