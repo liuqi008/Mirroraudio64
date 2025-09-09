@@ -271,7 +271,7 @@ namespace MirrorAudio
             if (_mainOut != null && _mainShareMode == AudioClientShareMode.Shared && mainInternal)
             {
                 var mix = TryGetMixFormat(_outMain);
-                var final = _resMain?.OutputWaveFormat ?? _bufMain?.WaveFormat;
+                var final = _resMain?.WaveFormat ?? _bufMain?.WaveFormat;
                 mainMulti = (mix != null) && !WaveFormatEquals(final, mix);
             }
 
@@ -279,7 +279,7 @@ namespace MirrorAudio
             if (_auxOut != null && _auxShareMode == AudioClientShareMode.Shared && auxInternal)
             {
                 var mix = TryGetMixFormat(_outAux);
-                var final = _resAux?.OutputWaveFormat ?? _bufAux?.WaveFormat;
+                var final = _resAux?.WaveFormat ?? _bufAux?.WaveFormat;
                 auxMulti = (mix != null) && !WaveFormatEquals(final, mix);
             }
 
