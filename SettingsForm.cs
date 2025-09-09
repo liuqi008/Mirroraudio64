@@ -1,7 +1,6 @@
 using System;
 using System.Drawing;
 using System.Linq;
-using System.Runtime.Serialization;
 using System.Windows.Forms;
 
 namespace MirrorAudio
@@ -30,7 +29,7 @@ namespace MirrorAudio
 
         public SettingsForm(AppSettings cfg, Func<StatusSnapshot> getStatus)
         {
-            _cfg = cfg.Clone(); // 避免直接改到外部实例
+            _cfg = cfg; // 由上层决定是否 Clone
             _getStatus = getStatus;
 
             InitializeComponent();
@@ -145,7 +144,7 @@ namespace MirrorAudio
             btnApply.Click += (_, __) => { ApplyRequested?.Invoke(BuildCurrentSettings()); RefreshResamplerQualityEnabled(); };
             btnInit.Click += (_, __) => { Preset_Main_LowLatencyLossless(); Preset_Aux_Standard(); };
 
-            // 简单：设备列表这里示例填充“系统默认/占位”，你项目里应替换为实际设备枚举
+            // 占位：你项目应替换为实际设备枚举
             cmbInput.Items.Add("System Default Input");
             cmbMain .Items.Add("System Default Output (Main)");
             cmbAux  .Items.Add("System Default Output (Aux)");
@@ -206,7 +205,7 @@ namespace MirrorAudio
 
         private AppSettings BuildCurrentSettings()
         {
-            var s = _cfg.Clone();
+            var s = _cfg; // 直接回写
 
             // 输入
             s.InputFormatStrategy = (InputFormatStrategy)cmbInStrategy.SelectedIndex;
@@ -275,57 +274,16 @@ namespace MirrorAudio
             lblAuxResampHint.Visible = !auxEnable;
         }
     }
-
-    // —— 下面这些模型/枚举，若你项目已有同名定义，可删除这里的定义 —— //
-
-    public enum ShareModeOption { Auto = 0, Exclusive = 1, Shared = 2 }
-    public enum SyncModeOption { Auto = 0, Event = 1, Polling = 2 }
-    public enum BufferAlignMode { DefaultAlign = 0, MinAlign = 1 }
-    public enum InputFormatStrategy { SystemMix = 0, Custom = 1, Float32Prefer = 2 }
-
-    [DataContract]
-    public class AppSettings
-    {
-        [DataMember] public string InputDeviceId;
-        [DataMember] public string MainDeviceId;
-        [DataMember] public string AuxDeviceId;
-
-        [DataMember] public ShareModeOption MainShare = ShareModeOption.Auto;
-        [DataMember] public ShareModeOption AuxShare = ShareModeOption.Auto;
-        [DataMember] public SyncModeOption MainSync = SyncModeOption.Auto;
-        [DataMember] public SyncModeOption AuxSync = SyncModeOption.Auto;
-
-        [DataMember] public int MainRate = 48000;
-        [DataMember] public int MainBits = 24;
-        [DataMember] public int AuxRate = 48000;
-        [DataMember] public int AuxBits = 24;
-
-        [DataMember] public int MainBufMs = 12;
-        [DataMember] public int AuxBufMs = 150;
-        [DataMember] public BufferAlignMode MainBufMode = BufferAlignMode.MinAlign;
-        [DataMember] public BufferAlignMode AuxBufMode = BufferAlignMode.DefaultAlign;
-
-        [DataMember] public int MainResamplerQuality = 50;
-        [DataMember] public int AuxResamplerQuality = 30;
-        [DataMember] public bool MainForceInternalResamplerInShared = false;
-        [DataMember] public bool AuxForceInternalResamplerInShared = false;
-
-        [DataMember] public bool AutoStart = false;
-        [DataMember] public bool EnableLogging = true;
-
-        [DataMember] public InputFormatStrategy InputFormatStrategy = InputFormatStrategy.SystemMix;
-        [DataMember] public int InputCustomSampleRate = 48000;
-        [DataMember] public int InputCustomBitDepth = 24;
-
-        public AppSettings Clone() => (AppSettings)MemberwiseClone();
-    }
-
-    public class StatusSnapshot
-    {
-        // 仅列与本补丁相关字段
-        public bool MainInternalResampler { get; set; }
-        public bool AuxInternalResampler { get; set; }
-        public bool MainMultiSRC { get; set; }
-        public bool AuxMultiSRC { get; set; }
-    }
 }
+
+        private void RefreshStatusLabels()
+        {
+            var st = _getStatus?.Invoke();
+            if (st != null)
+            {
+                lblStatusMainInternal.Text = (st.MainInternalResampler ? "是" : "否");
+                lblStatusMainMulti.Text    = (st.MainMultiSRC ? "是" : "否");
+                lblStatusAuxInternal.Text  = (st.AuxInternalResampler ? "是" : "否");
+                lblStatusAuxMulti.Text     = (st.AuxMultiSRC ? "是" : "否");
+            }
+        }
