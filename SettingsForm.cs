@@ -19,7 +19,8 @@ namespace MirrorAudio
                        lblMainBuf=new Label(), lblAuxBuf=new Label(),
                        lblMainPer=new Label(), lblAuxPer=new Label(),
                        lblMainPass=new Label(), lblAuxPass=new Label(),
-                       lblMainSRC2=new Label(), lblAuxSRC2=new Label();
+                       lblMainSRC2=new Label(), lblAuxSRC2=new Label(),
+                       lblMainRQ=new Label(), lblAuxRQ=new Label();
 
         // 右侧设置控件
         readonly ComboBox cmbInput=new ComboBox(), cmbMain=new ComboBox(), cmbAux=new ComboBox(),
@@ -88,12 +89,14 @@ namespace MirrorAudio
             AddRow(tblS, "主格式", lblMainFmt);
             AddRow(tblS, "主直通/重采样", lblMainPass);
             AddRow(tblS, "主：程序内重采样/多次SRC", lblMainSRC2);
+            AddRow(tblS, "主：程序内重采样质量", lblMainRQ);
             AddRow(tblS, "主缓冲", lblMainBuf);
             AddRow(tblS, "主周期", lblMainPer);
             AddRow(tblS, "副通道", lblAux);
             AddRow(tblS, "副格式", lblAuxFmt);
             AddRow(tblS, "副直通/重采样", lblAuxPass);
             AddRow(tblS, "副：程序内重采样/多次SRC", lblAuxSRC2);
+            AddRow(tblS, "副：程序内重采样质量", lblAuxRQ);
             AddRow(tblS, "副缓冲", lblAuxBuf);
             AddRow(tblS, "副周期", lblAuxPer);
 
@@ -101,6 +104,7 @@ namespace MirrorAudio
             btnRefresh.Text = "刷新状态";
             btnCopy.Text = "复制状态";
             btnRefresh.Click += (s, e) => RenderStatus();
+            this.Shown += (s, e) => RenderStatus();
             btnCopy.Click += (s, e) =>
             {
                 Clipboard.SetText(BuildStatusText());
@@ -195,7 +199,7 @@ namespace MirrorAudio
             // 新增一行：重采样质量 + 共享下也使用内部重采样
             cmbResampMain.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampMain.Items.AddRange(new object[]{ "60", "50", "40", "30" });
-            chkMainForceInShared.Text = "共享模式下也程序内重采样";
+            chkMainForceInShared.Text = "共享模式下也程序内重采样"; chkMainForceInShared.AutoSize = true;
             var pMainRow = new FlowLayoutPanel{ FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
             pMainRow.Controls.Add(cmbResampMain);
             pMainRow.Controls.Add(chkMainForceInShared);
@@ -230,7 +234,7 @@ namespace MirrorAudio
 
             cmbResampAux.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampAux.Items.AddRange(new object[]{ "60", "50", "40", "30" });
-            chkAuxForceInShared.Text = "共享模式下也程序内重采样";
+            chkAuxForceInShared.Text = "共享模式下也程序内重采样"; chkAuxForceInShared.AutoSize = true;
             var pAuxRow = new FlowLayoutPanel{ FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
             pAuxRow.Controls.Add(cmbResampAux);
             pAuxRow.Controls.Add(chkAuxForceInShared);
@@ -262,6 +266,7 @@ namespace MirrorAudio
             LoadDevices();
             LoadConfig(cur);
             RenderStatus();
+            this.Shown += (s, e) => RenderStatus();
 
             cmbInStrategy.SelectedIndexChanged += (s, e) =>
             {
@@ -339,7 +344,19 @@ lblMainPass.Text = "直通=" + (s.MainNoSRC ? "是" : "否") + " | 重采样=" +
             lblAuxBuf.Text  = (s.AuxBufferRequestedMs>0 ? (s.AuxBufferRequestedMs + " ms → ") : "") + (s.AuxBufferMs>0 ? (s.AuxBufferMs + " ms") : "-") + (s.AuxBufferMultiple>0? (" ("+s.AuxBufferMultiple.ToString("0.#")+"×最小)"):"");
             lblMainPer.Text = "默认 " + s.MainDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.MainMinimumPeriodMs.ToString("0.##") + " ms" + (s.MainAlignedMultiple>0 ? (" | 对齐≈" + s.MainAlignedMultiple.ToString("0.##") + "×") : "");
             lblAuxPer.Text  = "默认 " + s.AuxDefaultPeriodMs .ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs .ToString("0.##") + " ms" + (s.AuxAlignedMultiple>0 ? (" | 对齐≈" + s.AuxAlignedMultiple.ToString("0.##") + "×") : "");
-        }
+
+            // 内部重采样质量状态
+            lblMainRQ.Text = s.MainInternalResampler ? (s.MainInternalResamplerQuality>0 ? s.MainInternalResamplerQuality.ToString() : "（未知）") : "未生效";
+            lblAuxRQ.Text  = s.AuxInternalResampler  ? (s.AuxInternalResamplerQuality >0 ? s.AuxInternalResamplerQuality .ToString() : "未生效") : "未生效";
+
+            // 根据“程序内重采样是否生效”灰掉设置项
+            bool mainEnable = s.MainInternalResampler;
+            bool auxEnable  = s.AuxInternalResampler;
+            cmbResampMain.Enabled = mainEnable;
+            chkMainForceInShared.Enabled = mainEnable;
+            cmbResampAux.Enabled = auxEnable;
+            chkAuxForceInShared.Enabled  = auxEnable;
+}
 
         string BuildStatusText()
         {
