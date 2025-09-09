@@ -1,289 +1,475 @@
+
 using System;
 using System.Drawing;
+using System.Text;
 using System.Windows.Forms;
+using NAudio.CoreAudioApi;
 
 namespace MirrorAudio
 {
-    public partial class SettingsForm : Form
+    // 依赖类型：AppSettings, ShareModeOption, SyncModeOption, StatusSnapshot, InputFormatStrategy
+    sealed class SettingsForm : Form
     {
-        private readonly Func<StatusSnapshot> _getStatus;
-        private AppSettings _cfg;
+        // 左侧状态控件
+        readonly Label lblRun=new Label(),
+                       lblInput=new Label(),
+                       lblInputReq=new Label(),
+                       lblMain=new Label(), lblAux=new Label(),
+                       lblMainFmt=new Label(), lblAuxFmt=new Label(),
+                       lblMainBuf=new Label(), lblAuxBuf=new Label(),
+                       lblMainPer=new Label(), lblAuxPer=new Label(),
+                       lblMainPass=new Label(), lblAuxPass=new Label(),
+                       lblMainSRC2=new Label(), lblAuxSRC2=new Label();
 
-        // —— UI 控件 ——
-        private ComboBox cmbInput, cmbMain, cmbAux;
-        private ComboBox cmbShareMain, cmbShareAux, cmbSyncMain, cmbSyncAux, cmbBufModeMain, cmbBufModeAux;
-        private NumericUpDown numBufMain, numBufAux, numRateMain, numBitsMain, numRateAux, numBitsAux;
-        private ComboBox cmbResampMain, cmbResampAux;
-        private CheckBox chkMainForceInShared, chkAuxForceInShared;
-        private CheckBox chkAutoStart, chkLogging;
-        private ComboBox cmbInStrategy; private NumericUpDown numInRate, numInBits;
-        private Label lblMainResampHint, lblAuxResampHint;
-        private Button btnOk, btnCancel, btnApply, btnInit;
+        // 右侧设置控件
+        readonly ComboBox cmbInput=new ComboBox(), cmbMain=new ComboBox(), cmbAux=new ComboBox(),
+                          cmbShareMain=new ComboBox(), cmbSyncMain=new ComboBox(),
+                          cmbShareAux=new ComboBox(),  cmbSyncAux=new ComboBox();
+
+        // 缓冲对齐模式
+        readonly ComboBox cmbBufModeMain = new ComboBox();
+        readonly ComboBox cmbBufModeAux  = new ComboBox();
+
+        readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericUpDown(), numBufMain=new NumericUpDown(),
+                               numRateAux =new NumericUpDown(), numBitsAux =new NumericUpDown(), numBufAux =new NumericUpDown();
+
+        // —— 新增：重采样质量与共享下内部重采样 —— //
+        readonly ComboBox cmbResampMain = new ComboBox();
+        readonly ComboBox cmbResampAux  = new ComboBox();
+        readonly CheckBox chkMainForceInShared = new CheckBox();
+        readonly CheckBox chkAuxForceInShared  = new CheckBox();
+
+        // —— 新增：输入环回格式策略 —— //
+        readonly ComboBox cmbInStrategy=new ComboBox();
+        readonly NumericUpDown numInRate=new NumericUpDown(), numInBits=new NumericUpDown();
+
+        readonly CheckBox chkAutoStart=new CheckBox(), chkLogging=new CheckBox();
+        readonly Button btnOk=new Button(), btnCancel=new Button(), btnRefresh=new Button(), btnCopy=new Button(), btnReload=new Button();
+
+        readonly Func<StatusSnapshot> _statusProvider;
+
+        sealed class DevItem { public string Id,Name; public override string ToString() => Name; }
 
         public AppSettings Result { get; private set; }
-        public event Action<AppSettings> ApplyRequested;
 
-        public SettingsForm(AppSettings cfg, Func<StatusSnapshot> getStatus)
+        public SettingsForm(AppSettings cur, Func<StatusSnapshot> statusProvider)
         {
-            _cfg = cfg;
-            _getStatus = getStatus;
+            _statusProvider = statusProvider ?? (() => new StatusSnapshot { Running = false });
 
-            InitializeComponent();
-            BuildUi();
-            LoadFromConfig(_cfg);
-            RefreshResamplerQualityEnabled();
-        }
-
-        private void InitializeComponent()
-        {
             Text = "MirrorAudio 设置";
             StartPosition = FormStartPosition.CenterScreen;
-            Size = new Size(900, 680);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-        }
+            AutoScaleMode = AutoScaleMode.Dpi;
+            Font = SystemFonts.MessageBoxFont;
+            MinimumSize = new Size(1000, 680);
+            Size = new Size(1160, 720);
 
-        private void BuildUi()
-        {
-            var root = new TableLayoutPanel
+            // —— 左右各 1/2 —— //
+            var split = new SplitContainer
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 1,
-                RowCount = 4
+                Orientation = Orientation.Vertical,
+                FixedPanel = FixedPanel.None,
+                SplitterWidth = 6
             };
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            Controls.Add(root);
+            Controls.Add(split);
+            EventHandler keepHalf = (s, e) => { if (split.Width > 0) split.SplitterDistance = split.Width / 2; };
+            Shown += keepHalf; Resize += keepHalf;
 
-            // —— 输入（固定共享） ——
-            var grpInput = new GroupBox { Text = "输入（固定共享）", Dock = DockStyle.Top, Padding = new Padding(10) };
-            var pIn = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 2 };
-            grpInput.Controls.Add(pIn);
-            root.Controls.Add(grpInput);
+            // 左：状态区
+            var left = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10) };
+            var grpS = new GroupBox { Text = "当前状态（打开查看，关闭即释放内存）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var tblS = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32));
+            tblS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 68));
+            AddRow(tblS, "运行状态", lblRun);
+            AddRow(tblS, "输入", lblInput);
+            AddRow(tblS, "环回请求/接受/混音", lblInputReq);
+            AddRow(tblS, "主通道", lblMain);
+            AddRow(tblS, "主格式", lblMainFmt);
+            AddRow(tblS, "主直通/重采样", lblMainPass);
+            AddRow(tblS, "主：程序内重采样/多次SRC", lblMainSRC2);
+            AddRow(tblS, "主缓冲", lblMainBuf);
+            AddRow(tblS, "主周期", lblMainPer);
+            AddRow(tblS, "副通道", lblAux);
+            AddRow(tblS, "副格式", lblAuxFmt);
+            AddRow(tblS, "副直通/重采样", lblAuxPass);
+            AddRow(tblS, "副：程序内重采样/多次SRC", lblAuxSRC2);
+            AddRow(tblS, "副缓冲", lblAuxBuf);
+            AddRow(tblS, "副周期", lblAuxPer);
 
-            cmbInput = NewCombo();
-            cmbInStrategy = NewCombo(); cmbInStrategy.Items.AddRange(new object[] { "系统混音", "自定义", "32f优先" });
-            numInRate = NewNum(8000, 768000, 48000);
-            numInBits = NewNum(8, 32, 24);
+            var pBtns = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 6, 0, 4) };
+            btnRefresh.Text = "刷新状态";
+            btnCopy.Text = "复制状态";
+            btnRefresh.Click += (s, e) => RenderStatus();
+            btnCopy.Click += (s, e) =>
+            {
+                Clipboard.SetText(BuildStatusText());
+                MessageBox.Show("状态已复制。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+            pBtns.Controls.Add(btnRefresh);
+            pBtns.Controls.Add(btnCopy);
 
-            AddRow(pIn,
-                new Label { Text = "输入设备：" }, cmbInput,
-                new Label { Text = "输入策略：" }, cmbInStrategy,
-                new Label { Text = "自定义SR/Bit：" }, HStack(numInRate, new Label { Text = "Hz   " }, numInBits, new Label { Text = "bit" })
-            );
+            grpS.Controls.Add(tblS);
+            grpS.Controls.Add(pBtns);
+            left.Controls.Add(grpS);
+            split.Panel1.Controls.Add(left);
 
-            // —— 输出（主/副对称） ——
-            var grpOut = new GroupBox { Text = "输出", Dock = DockStyle.Fill, Padding = new Padding(10) };
-            root.Controls.Add(grpOut);
-            var pOut = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 8, AutoScroll = true };
-            grpOut.Controls.Add(pOut);
+            // 右：设置（设备 → 输入环回策略 → 主输出 → 副输出 → 其他）
+            var right = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10) };
+            split.Panel2.Controls.Add(right);
 
-            // 主
-            cmbMain = NewCombo();
-            cmbShareMain = NewCombo(); cmbShareMain.Items.AddRange(new object[] { "自动", "独占", "共享" });
-            cmbSyncMain = NewCombo(); cmbSyncMain.Items.AddRange(new object[] { "自动", "事件", "轮询" });
-            cmbBufModeMain = NewCombo(); cmbBufModeMain.Items.AddRange(new object[] { "默认对齐", "最小对齐" });
-            numBufMain = NewNum(3, 500, 12);
-            numRateMain = NewNum(8000, 768000, 48000);
-            numBitsMain = NewNum(8, 32, 24);
-            cmbResampMain = NewCombo(); cmbResampMain.Items.AddRange(new object[] { "60", "50", "40", "30" });
-            chkMainForceInShared = new CheckBox { Text = "共享模式下也使用内部重采样" };
-            lblMainResampHint = new Label { Text = "当前由系统混音/SRC，该设置不生效", ForeColor = Color.DimGray, AutoSize = true, Visible = false };
+            // 1) 设备
+            var gDev = new GroupBox { Text = "设备（选择并枚举）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var tDev = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            tDev.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
 
-            // 副
-            cmbAux = NewCombo();
-            cmbShareAux = NewCombo(); cmbShareAux.Items.AddRange(new object[] { "自动", "独占", "共享" });
-            cmbSyncAux = NewCombo(); cmbSyncAux.Items.AddRange(new object[] { "自动", "事件", "轮询" });
-            cmbBufModeAux = NewCombo(); cmbBufModeAux.Items.AddRange(new object[] { "默认对齐", "最小对齐" });
-            numBufAux = NewNum(3, 800, 150);
-            numRateAux = NewNum(8000, 768000, 48000);
-            numBitsAux = NewNum(8, 32, 24);
-            cmbResampAux = NewCombo(); cmbResampAux.Items.AddRange(new object[] { "60", "50", "40", "30" });
-            chkAuxForceInShared = new CheckBox { Text = "共享模式下也使用内部重采样" };
-            lblAuxResampHint = new Label { Text = "当前由系统混音/SRC，该设置不生效", ForeColor = Color.DimGray, AutoSize = true, Visible = false };
+            cmbInput.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbMain.DropDownStyle  = ComboBoxStyle.DropDownList;
+            cmbAux.DropDownStyle   = ComboBoxStyle.DropDownList;
 
-            // 主路行
-            AddRow(pOut, new Label { Text = "主输出设备：" }, cmbMain, new Label { Text = "模式：" }, cmbShareMain, new Label { Text = "同步：" }, cmbSyncMain);
-            AddRow(pOut, new Label { Text = "主缓冲(ms)：" }, numBufMain, new Label { Text = "缓冲对齐：" }, cmbBufModeMain, new Label { Text = "SR/Bit：" }, HStack(numRateMain, new Label { Text = "Hz   " }, numBitsMain, new Label { Text = "bit" }));
-            AddRow(pOut, new Label { Text = "重采样质量：" }, HStack(cmbResampMain, lblMainResampHint), new Label { Text = "" }, chkMainForceInShared, new Label { Text = "" }, new Label { Text = "" });
+            AddRow(tDev, "通道1 输入设备",  cmbInput);
+            AddRow(tDev, "通道2 主输出设备", cmbMain);
+            AddRow(tDev, "通道3 副输出设备", cmbAux);
 
-            // 副路行
-            AddRow(pOut, new Label { Text = "副输出设备：" }, cmbAux, new Label { Text = "模式：" }, cmbShareAux, new Label { Text = "同步：" }, cmbSyncAux);
-            AddRow(pOut, new Label { Text = "副缓冲(ms)：" }, numBufAux, new Label { Text = "缓冲对齐：" }, cmbBufModeAux, new Label { Text = "SR/Bit：" }, HStack(numRateAux, new Label { Text = "Hz   " }, numBitsAux, new Label { Text = "bit" }));
-            AddRow(pOut, new Label { Text = "重采样质量：" }, HStack(cmbResampAux, lblAuxResampHint), new Label { Text = "" }, chkAuxForceInShared, new Label { Text = "" }, new Label { Text = "" });
+            btnReload.Text = "重新枚举设备";
+            btnReload.AutoSize = true;
+            btnReload.Click += (s, e) => LoadDevices();
+            tDev.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            tDev.Controls.Add(btnReload, 1, tDev.RowCount++);
+            gDev.Controls.Add(tDev);
+            right.Controls.Add(gDev);
 
-            // —— 其他 ——
-            var grpOther = new GroupBox { Text = "其他", Dock = DockStyle.Top, Padding = new Padding(10) };
-            root.Controls.Add(grpOther);
-            var pO = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-            grpOther.Controls.Add(pO);
-            chkAutoStart = new CheckBox { Text = "开机自启动" };
-            chkLogging = new CheckBox { Text = "启用日志" };
-            pO.Controls.Add(chkAutoStart);
-            pO.Controls.Add(chkLogging);
+            // 2) 输入环回格式策略（B 方案）
+            var gIn = new GroupBox { Text = "输入（环回）格式策略", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var tIn = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            tIn.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            tIn.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
 
-            // —— 按钮区 —— 
-            var pBtn = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10) };
-            root.Controls.Add(pBtn);
-            btnOk = new Button { Text = "保存并关闭", AutoSize = true };
-            btnCancel = new Button { Text = "取消", AutoSize = true };
-            btnApply = new Button { Text = "应用(不关闭)", AutoSize = true };
-            btnInit = new Button { Text = "程序初始化", AutoSize = true };
+            cmbInStrategy.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbInStrategy.Items.AddRange(new object[] {
+                "System Mix（跟随系统混音）",
+                "24-bit / 48 kHz",
+                "24-bit / 96 kHz",
+                "24-bit / 192 kHz",
+                "32-float / 48 kHz",
+                "32-float / 96 kHz",
+                "32-float / 192 kHz",
+                "自定义..."
+            });
 
-            pBtn.Controls.AddRange(new Control[] { btnOk, btnCancel, btnApply, btnInit });
+            numInRate.Minimum = 8000; numInRate.Maximum = 384000; numInRate.Increment = 1000; numInRate.Width = 140;
+            numInBits.Minimum = 16;    numInBits.Maximum = 32;     numInBits.Increment = 8;    numInBits.Width = 140;
 
-            btnOk.Click += (_, __) => { Result = BuildCurrentSettings(); DialogResult = DialogResult.OK; Close(); };
-            btnCancel.Click += (_, __) => { DialogResult = DialogResult.Cancel; Close(); };
-            btnApply.Click += (_, __) => { ApplyRequested?.Invoke(BuildCurrentSettings()); RefreshResamplerQualityEnabled(); };
-            btnInit.Click += (_, __) => { Preset_Main_LowLatencyLossless(); Preset_Aux_Standard(); };
+            AddRow(tIn, "环回请求策略", cmbInStrategy);
+            AddRow(tIn, "自定义采样率 (Hz)", numInRate);
+            AddRow(tIn, "自定义位深 (16/24/32f)", numInBits);
 
-            // 占位：你项目应替换为实际设备枚举
-            cmbInput.Items.Add("System Default Input");
-            cmbMain .Items.Add("System Default Output (Main)");
-            cmbAux  .Items.Add("System Default Output (Aux)");
-            cmbInput.SelectedIndex = 0; cmbMain.SelectedIndex = 0; cmbAux.SelectedIndex = 0;
+            gIn.Controls.Add(tIn);
+            right.Controls.Add(gIn);
+
+            // 3) 主输出
+            var gMain = new GroupBox { Text = "主输出（高音质，低延迟）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var tMain = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            tMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
+
+            cmbShareMain.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbSyncMain .DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbShareMain.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
+            cmbSyncMain .Items.AddRange(new object[] { "自动（事件优先）", "强制事件", "强制轮询" });
+
+            numRateMain.Maximum = 384000; numRateMain.Minimum = 44100;  numRateMain.Increment = 1000;
+            numBitsMain.Maximum = 32;     numBitsMain.Minimum = 16;     numBitsMain.Increment = 8;
+            numBufMain.Maximum  = 200;    numBufMain.Minimum  = 4;
+
+            AddRow(tMain, "模式",                cmbShareMain);
+            AddRow(tMain, "同步方式",            cmbSyncMain);
+            AddRow(tMain, "采样率 (Hz，仅独占)", numRateMain);
+            AddRow(tMain, "位深 (bit，仅独占)",  numBitsMain);
+            AddRow(tMain, "缓冲 (ms)",            numBufMain);
+            cmbBufModeMain.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbBufModeMain.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
+            AddRow(tMain, "缓冲对齐模式",  cmbBufModeMain);
+
+            // 新增一行：重采样质量 + 共享下也使用内部重采样
+            cmbResampMain.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbResampMain.Items.AddRange(new object[]{ "60", "50", "40", "30" });
+            chkMainForceInShared.Text = "共享模式下也使用内部重采样";
+            var pMainRow = new FlowLayoutPanel{ FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
+            pMainRow.Controls.Add(cmbResampMain);
+            pMainRow.Controls.Add(chkMainForceInShared);
+            AddRow(tMain, "重采样质量", pMainRow);
+
+            gMain.Controls.Add(tMain);
+            right.Controls.Add(gMain);
+
+            // 4) 副输出
+            var gAux = new GroupBox { Text = "副输出（直播/采集卡）", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var tAux = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
+            tAux.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            tAux.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
+
+            cmbShareAux.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbSyncAux .DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbShareAux.Items.AddRange(new object[] { "自动（优先独占）", "强制独占", "强制共享" });
+            cmbSyncAux .Items.AddRange(new object[] { "自动（事件优先）", "强制事件", "强制轮询" });
+
+            numRateAux.Maximum = 384000;  numRateAux.Minimum = 44100;   numRateAux.Increment = 1000;
+            numBitsAux.Maximum = 32;      numBitsAux.Minimum = 16;      numBitsAux.Increment = 8;
+            numBufAux.Maximum  = 400;     numBufAux.Minimum  = 50;
+
+            AddRow(tAux, "模式",                cmbShareAux);
+            AddRow(tAux, "同步方式",            cmbSyncAux);
+            AddRow(tAux, "采样率 (Hz，仅独占)", numRateAux);
+            AddRow(tAux, "位深 (bit，仅独占)",  numBitsAux);
+            AddRow(tAux, "缓冲 (ms)",            numBufAux);
+            cmbBufModeAux.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbBufModeAux.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
+            AddRow(tAux, "缓冲对齐模式",  cmbBufModeAux);
+
+            cmbResampAux.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbResampAux.Items.AddRange(new object[]{ "60", "50", "40", "30" });
+            chkAuxForceInShared.Text = "共享模式下也使用内部重采样";
+            var pAuxRow = new FlowLayoutPanel{ FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
+            pAuxRow.Controls.Add(cmbResampAux);
+            pAuxRow.Controls.Add(chkAuxForceInShared);
+            AddRow(tAux, "重采样质量", pAuxRow);
+
+            gAux.Controls.Add(tAux);
+            right.Controls.Add(gAux);
+
+            // 5) 其他
+            var gOpt = new GroupBox { Text = "其他", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
+            var pOpt = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, Dock = DockStyle.Top, AutoSize = true };
+            chkAutoStart.Text = "Windows 自启动";
+            chkLogging.Text   = "启用日志（排障时开启）";
+            pOpt.Controls.Add(chkAutoStart);
+            pOpt.Controls.Add(chkLogging);
+            gOpt.Controls.Add(pOpt);
+            right.Controls.Add(gOpt);
+
+            // 底部按钮
+            var pnlButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, Padding = new Padding(10), AutoSize = true };
+            btnOk.Text = "保存"; btnCancel.Text = "取消";
+            AcceptButton = btnOk; CancelButton = btnCancel;
+            btnOk.DialogResult = DialogResult.OK; btnCancel.DialogResult = DialogResult.Cancel;
+            btnOk.Click += (s, e) => SaveAndClose();
+            pnlButtons.Controls.AddRange(new Control[] { btnOk, btnCancel });
+            Controls.Add(pnlButtons);
+
+            // 初始化
+            LoadDevices();
+            LoadConfig(cur);
+            RenderStatus();
+
+            cmbInStrategy.SelectedIndexChanged += (s, e) =>
+            {
+                bool cust = (cmbInStrategy.SelectedIndex == (int)InputFormatStrategy.Custom);
+                numInRate.Enabled = cust; numInBits.Enabled = cust;
+            };
         }
 
-        private static ComboBox NewCombo()
+        // —— 数据加载 & 状态渲染 —— //
+        void LoadConfig(AppSettings cur)
         {
-            return new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+            Result = new AppSettings
+            {
+                InputDeviceId=cur.InputDeviceId, MainDeviceId=cur.MainDeviceId, AuxDeviceId=cur.AuxDeviceId,
+                MainShare=cur.MainShare, MainSync=cur.MainSync, MainRate=cur.MainRate, MainBits=cur.MainBits, MainBufMs=cur.MainBufMs,
+                AuxShare=cur.AuxShare, AuxSync=cur.AuxSync, AuxRate=cur.AuxRate, AuxBits=cur.AuxBits, AuxBufMs=cur.AuxBufMs,
+                AutoStart=cur.AutoStart, EnableLogging=cur.EnableLogging,
+                InputFormatStrategy = cur.InputFormatStrategy,
+                InputCustomSampleRate = cur.InputCustomSampleRate,
+                InputCustomBitDepth  = cur.InputCustomBitDepth
+            };
+            SelectById(cmbInput, cur.InputDeviceId);
+            SelectById(cmbMain,  cur.MainDeviceId);
+            SelectById(cmbAux,   cur.AuxDeviceId);
+
+            // 输入环回策略
+            cmbInStrategy.SelectedIndex = (int)cur.InputFormatStrategy;
+            numInRate.Value = Clamp(cur.InputCustomSampleRate, (int)numInRate.Minimum, (int)numInRate.Maximum);
+            numInBits.Value = Clamp(cur.InputCustomBitDepth,  (int)numInBits.Minimum, (int)numInBits.Maximum);
+
+            numRateMain.Value = Clamp(cur.MainRate,  (int)numRateMain.Minimum, (int)numRateMain.Maximum);
+            numBitsMain.Value = Clamp(cur.MainBits,  (int)numBitsMain.Minimum, (int)numBitsMain.Maximum);
+            numBufMain.Value  = Clamp(cur.MainBufMs, (int)numBufMain.Minimum,  (int)numBufMain.Maximum);
+            cmbShareMain.SelectedIndex = cur.MainShare==ShareModeOption.Auto?0:(cur.MainShare==ShareModeOption.Exclusive?1:2);
+            cmbSyncMain .SelectedIndex = cur.MainSync ==SyncModeOption .Auto?0:(cur.MainSync ==SyncModeOption .Event     ?1:2);
+            cmbBufModeMain.SelectedIndex = cur.MainBufMode==BufferAlignMode.MinAlign ? 1 : 0;
+
+            numRateAux.Value  = Clamp(cur.AuxRate,   (int)numRateAux.Minimum,  (int)numRateAux.Maximum);
+            numBitsAux.Value  = Clamp(cur.AuxBits,   (int)numBitsAux.Minimum,  (int)numBitsAux.Maximum);
+            numBufAux.Value   = Clamp(cur.AuxBufMs,  (int)numBufAux.Minimum,   (int)numBufAux.Maximum);
+            cmbShareAux.SelectedIndex = cur.AuxShare==ShareModeOption.Auto?0:(cur.AuxShare==ShareModeOption.Exclusive?1:2);
+            cmbSyncAux .SelectedIndex = cur.AuxSync ==SyncModeOption .Auto?0:(cur.AuxSync ==SyncModeOption .Event     ?1:2);
+            cmbBufModeAux.SelectedIndex = cur.AuxBufMode==BufferAlignMode.MinAlign ? 1 : 0;
+
+            chkAutoStart.Checked = cur.AutoStart;
+            chkLogging.Checked   = cur.EnableLogging;
+
+            // 新增字段
+            try { cmbResampMain.SelectedItem = (cur.MainResamplerQuality==0? "50" : cur.MainResamplerQuality.ToString()); } catch { cmbResampMain.SelectedItem = "50"; }
+            try { cmbResampAux .SelectedItem = (cur.AuxResamplerQuality ==0? "30" : cur.AuxResamplerQuality .ToString()); } catch { cmbResampAux.SelectedItem = "30"; }
+            try { chkMainForceInShared.Checked = cur.MainForceInternalResamplerInShared; } catch { chkMainForceInShared.Checked = false; }
+            try { chkAuxForceInShared .Checked = cur.AuxForceInternalResamplerInShared ; } catch { chkAuxForceInShared .Checked = false; }
         }
 
-        private static NumericUpDown NewNum(int min, int max, int val)
+        void RenderStatus()
         {
-            return new NumericUpDown { Minimum = min, Maximum = max, Value = val, Increment = 1, Dock = DockStyle.Fill };
+            StatusSnapshot s; try { s = _statusProvider(); } catch { s = new StatusSnapshot(); }
+            lblRun.Text   = s.Running ? "运行中" : "停止";
+            lblInput.Text = (s.InputDevice??"-") + " | " + (s.InputRole??"-") + " | 实得: " + (s.InputFormat??"-");
+            lblInputReq.Text = "请求: " + (s.InputRequested??"-") + "  |  接受: " + (s.InputAccepted??"-") + "  |  混音: " + (s.InputMix??"-");
+
+            lblMain.Text  = (s.MainDevice ??"-") + " | " + (s.MainMode ??"-") + " | " + (s.MainSync ??"-");
+            lblAux.Text   = (s.AuxDevice  ??"-") + " | " + (s.AuxMode  ??"-") + " | " + (s.AuxSync  ??"-");
+            lblMainFmt.Text = s.MainFormat ?? "-";
+            lblAuxFmt.Text  = s.AuxFormat  ?? "-";
+
+            lblMainSRC2.Text = "程序内重采样=" + (s.MainInternalResampler ? "是" : "否")
+                               + "  |  多次重采样 SRC=" + (s.MainMultiSRC ? "是" : "否");
+            lblAuxSRC2.Text  = "程序内重采样=" + (s.AuxInternalResampler  ? "是" : "否")
+                               + "  |  多次重采样 SRC=" + (s.AuxMultiSRC  ? "是" : "否");
+lblMainPass.Text = "直通=" + (s.MainNoSRC ? "是" : "否") + " | 重采样=" + (s.MainResampling ? "是" : "否");
+            lblAuxPass.Text  = "直通=" + (s.AuxNoSRC  ? "是" : "否") + " | 重采样=" + (s.AuxResampling  ? "是" : "否");
+
+            lblMainBuf.Text = (s.MainBufferRequestedMs>0 ? (s.MainBufferRequestedMs + " ms → ") : "") + (s.MainBufferMs>0 ? (s.MainBufferMs + " ms") : "-") + (s.MainBufferMultiple>0? (" ("+s.MainBufferMultiple.ToString("0.#")+"×最小)"):"");
+            lblAuxBuf.Text  = (s.AuxBufferRequestedMs>0 ? (s.AuxBufferRequestedMs + " ms → ") : "") + (s.AuxBufferMs>0 ? (s.AuxBufferMs + " ms") : "-") + (s.AuxBufferMultiple>0? (" ("+s.AuxBufferMultiple.ToString("0.#")+"×最小)"):"");
+            lblMainPer.Text = "默认 " + s.MainDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.MainMinimumPeriodMs.ToString("0.##") + " ms" + (s.MainAlignedMultiple>0 ? (" | 对齐≈" + s.MainAlignedMultiple.ToString("0.##") + "×") : "");
+            lblAuxPer.Text  = "默认 " + s.AuxDefaultPeriodMs .ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs .ToString("0.##") + " ms" + (s.AuxAlignedMultiple>0 ? (" | 对齐≈" + s.AuxAlignedMultiple.ToString("0.##") + "×") : "");
         }
 
-        private static Control HStack(params Control[] cs)
+        string BuildStatusText()
         {
-            var p = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, WrapContents = false, Dock = DockStyle.Fill };
-            foreach (var c in cs) p.Controls.Add(c);
-            return p;
+            StatusSnapshot s; try { s = _statusProvider(); } catch { s = new StatusSnapshot(); }
+            var sb = new StringBuilder(512);
+            sb.AppendLine("MirrorAudio 状态");
+            sb.AppendLine("运行: " + (s.Running ? "运行中" : "停止"));
+            sb.AppendLine("输入: " + (s.InputDevice??"-") + " | " + (s.InputRole??"-") + " | 实得: " + (s.InputFormat??"-"));
+            sb.AppendLine("环回: 请求 " + (s.InputRequested??"-") + " | 接受 " + (s.InputAccepted??"-") + " | 混音 " + (s.InputMix??"-"));
+            sb.AppendLine("主通道: " + (s.MainDevice??"-") + " | " + (s.MainMode??"-") + " | " + (s.MainSync??"-"));
+            sb.AppendLine("主格式: " + (s.MainFormat??"-"));
+            sb.AppendLine("主直通/重采样: 直通=" + (s.MainNoSRC ? "是" : "否") + " | 重采样=" + (s.MainResampling ? "是" : "否"));
+            sb.AppendLine("主缓冲: " + (s.MainBufferRequestedMs>0?(s.MainBufferRequestedMs+" ms → "):"") + (s.MainBufferMs>0?(s.MainBufferMs+" ms"):"-") + (s.MainBufferMultiple>0?(" ("+s.MainBufferMultiple.ToString("0.#")+"×最小)"):""));
+            sb.AppendLine("主周期: 默认 " + s.MainDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.MainMinimumPeriodMs.ToString("0.##") + " ms");
+            sb.AppendLine("副通道: " + (s.AuxDevice??"-") + " | " + (s.AuxMode??"-") + " | " + (s.AuxSync??"-"));
+            sb.AppendLine("副格式: " + (s.AuxFormat??"-"));
+            sb.AppendLine("副直通/重采样: 直通=" + (s.AuxNoSRC ? "是" : "否") + " | 重采样=" + (s.AuxResampling ? "是" : "否"));
+            sb.AppendLine("副缓冲: " + (s.AuxBufferRequestedMs>0?(s.AuxBufferRequestedMs+" ms → "):"") + (s.AuxBufferMs>0?(s.AuxBufferMs+" ms"):"-") + (s.AuxBufferMultiple>0?(" ("+s.AuxBufferMultiple.ToString("0.#")+"×最小)"):""));
+            sb.AppendLine("副周期: 默认 " + s.AuxDefaultPeriodMs.ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs.ToString("0.##") + " ms");
+            return sb.ToString();
         }
 
-        private static void AddRow(TableLayoutPanel t, params Control[] cs)
+        // —— 工具方法 —— //
+        static void AddRow(TableLayoutPanel t, string label, Control c)
         {
-            var r = t.RowCount++;
+            var l = new Label { Text = label, AutoSize = true, TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill, Padding = new Padding(0, 6, 0, 6) };
+            c.Dock = DockStyle.Fill;
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            t.ColumnCount = 6;
-            t.ColumnStyles.Clear();
-            for (int i = 0; i < t.ColumnCount; i++) t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / t.ColumnCount));
-            for (int i = 0; i < cs.Length; i++) t.Controls.Add(cs[i], i, r);
+            t.Controls.Add(l, 0, t.RowCount);
+            t.Controls.Add(c, 1, t.RowCount);
+            t.RowCount++;
         }
 
-        private void LoadFromConfig(AppSettings c)
+        static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
+
+        void LoadDevices()
         {
-            // 输入
-            cmbInStrategy.SelectedIndex = (int)c.InputFormatStrategy;
-            numInRate.Value = c.InputCustomSampleRate;
-            numInBits.Value = c.InputCustomBitDepth;
+            var mm = new MMDeviceEnumerator();
 
-            // 主
-            cmbShareMain.SelectedIndex = ToIdx(c.MainShare);
-            cmbSyncMain .SelectedIndex = ToIdx(c.MainSync);
-            cmbBufModeMain.SelectedIndex = (c.MainBufMode == BufferAlignMode.MinAlign) ? 1 : 0;
-            numBufMain.Value = c.MainBufMs;
-            numRateMain.Value = c.MainRate;
-            numBitsMain.Value = c.MainBits;
-            cmbResampMain.SelectedItem = c.MainResamplerQuality.ToString();
-            chkMainForceInShared.Checked = c.MainForceInternalResamplerInShared;
+            cmbInput.Items.Clear();
+            foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active))
+                cmbInput.Items.Add(new DevItem { Id = d.ID, Name = "录音: " + d.FriendlyName });
+            foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+                cmbInput.Items.Add(new DevItem { Id = d.ID, Name = "环回: " + d.FriendlyName });
 
-            // 副
-            cmbShareAux.SelectedIndex = ToIdx(c.AuxShare);
-            cmbSyncAux .SelectedIndex = ToIdx(c.AuxSync);
-            cmbBufModeAux.SelectedIndex = (c.AuxBufMode == BufferAlignMode.MinAlign) ? 1 : 0;
-            numBufAux.Value = c.AuxBufMs;
-            numRateAux.Value = c.AuxRate;
-            numBitsAux.Value = c.AuxBits;
-            cmbResampAux.SelectedItem = c.AuxResamplerQuality.ToString();
-            chkAuxForceInShared.Checked = c.AuxForceInternalResamplerInShared;
+            cmbMain.Items.Clear();
+            cmbAux.Items.Clear();
+            foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+            {
+                var it = new DevItem { Id = d.ID, Name = d.FriendlyName };
+                cmbMain.Items.Add(it);
+                cmbAux.Items.Add(new DevItem { Id = d.ID, Name = d.FriendlyName });
+            }
 
-            // 其他
-            chkAutoStart.Checked = c.AutoStart;
-            chkLogging.Checked = c.EnableLogging;
+            if (cmbInput.Items.Count>0 && cmbInput.SelectedIndex<0) cmbInput.SelectedIndex = 0;
+            if (cmbMain.Items.Count>0  && cmbMain.SelectedIndex<0)  cmbMain.SelectedIndex  = 0;
+            if (cmbAux.Items.Count>0   && cmbAux.SelectedIndex<0)   cmbAux.SelectedIndex   = 0;
         }
 
-        private int ToIdx(ShareModeOption s)
+        void SelectById(ComboBox cmb, string id)
         {
-            return s == ShareModeOption.Exclusive ? 1 : s == ShareModeOption.Shared ? 2 : 0;
+            if (string.IsNullOrEmpty(id) || cmb.Items.Count == 0)
+            {
+                if (cmb.Items.Count > 0) cmb.SelectedIndex = 0;
+                return;
+            }
+            for (int i = 0; i < cmb.Items.Count; i++)
+            {
+                var it = cmb.Items[i] as DevItem;
+                if (it != null && it.Id == id) { cmb.SelectedIndex = i; return; }
+            }
+            cmb.SelectedIndex = 0;
         }
 
-        private int ToIdx(SyncModeOption s)
+        void SaveAndClose()
         {
-            return s == SyncModeOption.Event ? 1 : s == SyncModeOption.Polling ? 2 : 0;
-        }
+            var inSel   = cmbInput.SelectedItem as DevItem;
+            var mainSel = cmbMain .SelectedItem as DevItem;
+            var auxSel  = cmbAux  .SelectedItem as DevItem;
 
-        private AppSettings BuildCurrentSettings()
-        {
-            var s = _cfg;
+            if (mainSel == null || auxSel == null)
+            {
+                MessageBox.Show("请至少选择主/副输出设备。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                DialogResult = DialogResult.None;
+                return;
+            }
 
-            // 输入
-            s.InputFormatStrategy = (InputFormatStrategy)cmbInStrategy.SelectedIndex;
-            s.InputCustomSampleRate = (int)numInRate.Value;
-            s.InputCustomBitDepth = (int)numInBits.Value;
+            ShareModeOption shareMain = cmbShareMain.SelectedIndex==1 ? ShareModeOption.Exclusive :
+                                        (cmbShareMain.SelectedIndex==2 ? ShareModeOption.Shared : ShareModeOption.Auto);
+            SyncModeOption  syncMain  = cmbSyncMain .SelectedIndex==1 ? SyncModeOption .Event :
+                                        (cmbSyncMain .SelectedIndex==2 ? SyncModeOption .Polling : SyncModeOption .Auto);
 
-            // 主
-            s.MainShare = cmbShareMain.SelectedIndex == 1 ? ShareModeOption.Exclusive : (cmbShareMain.SelectedIndex == 2 ? ShareModeOption.Shared : ShareModeOption.Auto);
-            s.MainSync  = cmbSyncMain .SelectedIndex == 1 ? SyncModeOption.Event    : (cmbSyncMain .SelectedIndex == 2 ? SyncModeOption.Polling  : SyncModeOption.Auto);
-            s.MainBufMode = (cmbBufModeMain.SelectedIndex == 1) ? BufferAlignMode.MinAlign : BufferAlignMode.DefaultAlign;
-            s.MainBufMs = (int)numBufMain.Value;
-            s.MainRate = (int)numRateMain.Value;
-            s.MainBits = (int)numBitsMain.Value;
-            s.MainResamplerQuality = int.Parse((string)cmbResampMain.SelectedItem);
-            s.MainForceInternalResamplerInShared = chkMainForceInShared.Checked;
+            ShareModeOption shareAux  = cmbShareAux .SelectedIndex==1 ? ShareModeOption.Exclusive :
+                                        (cmbShareAux .SelectedIndex==2 ? ShareModeOption.Shared : ShareModeOption.Auto);
+            SyncModeOption  syncAux   = cmbSyncAux  .SelectedIndex==1 ? SyncModeOption .Event :
+                                        (cmbSyncAux  .SelectedIndex==2 ? SyncModeOption .Polling : SyncModeOption .Auto);
 
-            // 副
-            s.AuxShare = cmbShareAux.SelectedIndex == 1 ? ShareModeOption.Exclusive : (cmbShareAux.SelectedIndex == 2 ? ShareModeOption.Shared : ShareModeOption.Auto);
-            s.AuxSync  = cmbSyncAux .SelectedIndex == 1 ? SyncModeOption.Event     : (cmbSyncAux .SelectedIndex == 2 ? SyncModeOption.Polling  : SyncModeOption.Auto);
-            s.AuxBufMode = (cmbBufModeAux.SelectedIndex == 1) ? BufferAlignMode.MinAlign : BufferAlignMode.DefaultAlign;
-            s.AuxBufMs = (int)numBufAux.Value;
-            s.AuxRate = (int)numRateAux.Value;
-            s.AuxBits = (int)numBitsAux.Value;
-            s.AuxResamplerQuality = int.Parse((string)cmbResampAux.SelectedItem);
-            s.AuxForceInternalResamplerInShared = chkAuxForceInShared.Checked;
+            Result = new AppSettings
+            {
+                InputDeviceId = inSel != null ? inSel.Id : null,
+                MainDeviceId  = mainSel.Id,
+                AuxDeviceId   = auxSel.Id,
+                MainShare = shareMain,
+                MainSync  = syncMain,
+                MainRate  = (int)numRateMain.Value,
+                MainBits  = (int)numBitsMain.Value,
+                MainBufMs = (int)numBufMain.Value,
+                MainBufMode = (cmbBufModeMain.SelectedIndex==1 ? BufferAlignMode.MinAlign : BufferAlignMode.DefaultAlign),
+                AuxShare  = shareAux,
+                AuxSync   = syncAux,
+                AuxRate   = (int)numRateAux.Value,
+                AuxBits   = (int)numBitsAux.Value,
+                AuxBufMs  = (int)numBufAux.Value,
+                AuxBufMode = (cmbBufModeAux.SelectedIndex==1 ? BufferAlignMode.MinAlign : BufferAlignMode.DefaultAlign),
+                AutoStart = chkAutoStart.Checked,
+                EnableLogging = chkLogging.Checked,
 
-            // 其他
-            s.AutoStart = chkAutoStart.Checked;
-            s.EnableLogging = chkLogging.Checked;
+                InputFormatStrategy = (InputFormatStrategy)cmbInStrategy.SelectedIndex,
+                InputCustomSampleRate = (int)numInRate.Value,
+                InputCustomBitDepth = (int)numInBits.Value,
 
-            Result = s;
-            return s;
-        }
+                // 新增字段保存
+                MainResamplerQuality = int.Parse((string)(cmbResampMain.SelectedItem ?? "50")),
+                AuxResamplerQuality  = int.Parse((string)(cmbResampAux .SelectedItem ?? "30")),
+                MainForceInternalResamplerInShared = chkMainForceInShared.Checked,
+                AuxForceInternalResamplerInShared  = chkAuxForceInShared .Checked
+            };
 
-        private void Preset_Main_LowLatencyLossless()
-        {
-            cmbShareMain.SelectedIndex = 1; // 独占
-            cmbSyncMain .SelectedIndex = 1; // 事件
-            cmbBufModeMain.SelectedIndex = 1; // 最小对齐
-            numBufMain.Value = Math.Min(Math.Max(12, (int)numBufMain.Minimum), (int)numBufMain.Maximum);
-            cmbResampMain.SelectedItem = "50";
-            chkMainForceInShared.Checked = false;
-        }
-
-        private void Preset_Aux_Standard()
-        {
-            cmbShareAux.SelectedIndex = 2; // 共享
-            cmbSyncAux .SelectedIndex = 0; // 自动
-            cmbBufModeAux.SelectedIndex = 0; // 默认对齐
-            numBufAux.Value = Math.Min(Math.Max(150, (int)numBufAux.Minimum), (int)numBufAux.Maximum);
-            cmbResampAux.SelectedItem = "30";
-            chkAuxForceInShared.Checked = false;
-        }
-
-        private void RefreshResamplerQualityEnabled()
-        {
-            var st = _getStatus != null ? _getStatus() : null;
-
-            bool mainEnable = st != null && st.MainInternalResampler;
-            bool auxEnable  = st != null && st.AuxInternalResampler;
-
-            cmbResampMain.Enabled = mainEnable;
-            lblMainResampHint.Visible = !mainEnable;
-
-            cmbResampAux.Enabled = auxEnable;
-            lblAuxResampHint.Visible = !auxEnable;
+            DialogResult = DialogResult.OK;
+            Close();
         }
     }
 }
