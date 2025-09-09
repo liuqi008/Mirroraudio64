@@ -195,7 +195,7 @@ namespace MirrorAudio
             // 新增一行：重采样质量 + 共享下也使用内部重采样
             cmbResampMain.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampMain.Items.AddRange(new object[]{ "60", "50", "40", "30" });
-            chkMainForceInShared.Text = "共享模式下也使用内部重采样";
+            chkMainForceInShared.Text = "共享模式下也程序内重采样";
             var pMainRow = new FlowLayoutPanel{ FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
             pMainRow.Controls.Add(cmbResampMain);
             pMainRow.Controls.Add(chkMainForceInShared);
@@ -230,7 +230,7 @@ namespace MirrorAudio
 
             cmbResampAux.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampAux.Items.AddRange(new object[]{ "60", "50", "40", "30" });
-            chkAuxForceInShared.Text = "共享模式下也使用内部重采样";
+            chkAuxForceInShared.Text = "共享模式下也程序内重采样";
             var pAuxRow = new FlowLayoutPanel{ FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
             pAuxRow.Controls.Add(cmbResampAux);
             pAuxRow.Controls.Add(chkAuxForceInShared);
