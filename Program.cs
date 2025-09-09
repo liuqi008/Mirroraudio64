@@ -1,4 +1,4 @@
-
+using System.Runtime.InteropServices;\n
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -140,7 +140,7 @@ public bool MainMultiSRC, AuxMultiSRC;
         IWaveProvider _srcMain,_srcAux; WasapiOut _mainOut,_auxOut;
         MediaFoundationResampler _resMain,_resAux;
 
-        bool _running,_mainIsExclusive,_mainEventSyncUsed,_auxIsExclusive,_auxEventSyncUsed;
+        bool _running,(_mainShareMode==AudioClientShareMode.Exclusive),_mainEventSyncUsed,(_auxShareMode==AudioClientShareMode.Exclusive),_auxEventSyncUsed;
         int _mainBufEffectiveMs,_auxBufEffectiveMs;
         string _inRoleStr="-",_inFmtStr="-",_inDevName="-",_mainFmtStr="-",_auxFmtStr="-";
         string _inReqStr="-", _inAccStr="-", _inMixStr="-";
@@ -334,7 +334,7 @@ public bool MainMultiSRC, AuxMultiSRC;
             GetPeriods(_outMain,out _defMainMs,out _minMainMs); GetPeriods(_outAux,out _defAuxMs,out _minAuxMs);
 
             // —— 主通道：独占/共享 + 事件/轮询 —— //
-            _srcMain=_bufMain; _resMain=null; _mainIsExclusive=false; _mainEventSyncUsed=false; _mainBufEffectiveMs=_cfg.MainBufMs; _mainFmtStr="-";
+            _srcMain=_bufMain; _resMain=null; (_mainShareMode==AudioClientShareMode.Exclusive)=false; _mainEventSyncUsed=false; _mainBufEffectiveMs=_cfg.MainBufMs; _mainFmtStr="-";
             _mainNoSRC=false; _mainResampling=false;
             var desiredMain=new WaveFormat(_cfg.MainRate,_cfg.MainBits,2);
             bool isLoopMain=(_inDev.DataFlow==DataFlow.Render)&&_inDev.ID==_outMain.ID;
@@ -350,7 +350,7 @@ public bool MainMultiSRC, AuxMultiSRC;
                     if(needRateChange) _srcMain=_resMain=new MediaFoundationResampler(_bufMain,desiredMain){ ResamplerQuality=_cfg.MainResamplerQuality };
                     int ms=BufAligned(_cfg.MainBufMs,true,_defMainMs,_minMainMs,_cfg.MainBufMode);
                     _mainOut=CreateOut(_outMain,AudioClientShareMode.Exclusive,_cfg.MainSync,ms,_srcMain,out _mainEventSyncUsed);
-                    if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(desiredMain); mainTargetFmt=desiredMain; _mainResampling = needRateChange; _mainNoSRC = !needRateChange; }
+                    if(_mainOut!=null){ (_mainShareMode==AudioClientShareMode.Exclusive)=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(desiredMain); mainTargetFmt=desiredMain; _mainResampling = needRateChange; _mainNoSRC = !needRateChange; }
                 }
                 if(_mainOut==null && _cfg.MainBits==24){
                     var fmt32=new WaveFormat(_cfg.MainRate,32,2);
@@ -359,7 +359,7 @@ public bool MainMultiSRC, AuxMultiSRC;
                         _srcMain=_resMain=new MediaFoundationResampler(_bufMain,fmt32){ ResamplerQuality=_cfg.MainResamplerQuality };
                         int ms=BufAligned(_cfg.MainBufMs,true,_defMainMs,_minMainMs,_cfg.MainBufMode);
                         _mainOut=CreateOut(_outMain,AudioClientShareMode.Exclusive,_cfg.MainSync,ms,_srcMain,out _mainEventSyncUsed);
-                        if(_mainOut!=null){ _mainIsExclusive=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(fmt32); mainTargetFmt=fmt32; _mainResampling = needRateChange; _mainNoSRC = !needRateChange; }
+                        if(_mainOut!=null){ (_mainShareMode==AudioClientShareMode.Exclusive)=true; _mainBufEffectiveMs=ms; _mainFmtStr=Fmt(fmt32); mainTargetFmt=fmt32; _mainResampling = needRateChange; _mainNoSRC = !needRateChange; }
                     }
                 }
                 if(_mainOut==null && _cfg.MainShare==ShareModeOption.Exclusive){ MessageBox.Show("主通道独占失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Warning); Cleanup(); return; }
@@ -375,7 +375,7 @@ public bool MainMultiSRC, AuxMultiSRC;
             }
 
             // —— 副通道 —— //
-            _srcAux=_bufAux; _resAux=null; _auxIsExclusive=false; _auxEventSyncUsed=false; _auxBufEffectiveMs=_cfg.AuxBufMs; _auxFmtStr="-";
+            _srcAux=_bufAux; _resAux=null; (_auxShareMode==AudioClientShareMode.Exclusive)=false; _auxEventSyncUsed=false; _auxBufEffectiveMs=_cfg.AuxBufMs; _auxFmtStr="-";
             _auxNoSRC=false; _auxResampling=false;
             var desiredAux=new WaveFormat(_cfg.AuxRate,_cfg.AuxBits,2);
             bool isLoopAux=(_inDev.DataFlow==DataFlow.Render)&&_inDev.ID==_outAux.ID;
@@ -391,7 +391,7 @@ public bool MainMultiSRC, AuxMultiSRC;
                     if(needRateChange) _srcAux=_resAux=new MediaFoundationResampler(_bufAux,desiredAux){ ResamplerQuality=_cfg.AuxResamplerQuality };
                     int ms=BufAligned(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs,_cfg.AuxBufMode);
                     _auxOut=CreateOut(_outAux,AudioClientShareMode.Exclusive,_cfg.AuxSync,ms,_srcAux,out _auxEventSyncUsed);
-                    if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(desiredAux); auxTargetFmt=desiredAux; _auxResampling=needRateChange; _auxNoSRC=!needRateChange; }
+                    if(_auxOut!=null){ (_auxShareMode==AudioClientShareMode.Exclusive)=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(desiredAux); auxTargetFmt=desiredAux; _auxResampling=needRateChange; _auxNoSRC=!needRateChange; }
                 }
                 if(_auxOut==null && _cfg.AuxBits==24){
                     var fmt32=new WaveFormat(_cfg.AuxRate,32,2);
@@ -400,7 +400,7 @@ public bool MainMultiSRC, AuxMultiSRC;
                         _srcAux=_resAux=new MediaFoundationResampler(_bufAux,fmt32){ ResamplerQuality=_cfg.AuxResamplerQuality };
                         int ms=BufAligned(_cfg.AuxBufMs,true,_defAuxMs,_minAuxMs,_cfg.AuxBufMode);
                         _auxOut=CreateOut(_outAux,AudioClientShareMode.Exclusive,_cfg.AuxSync,ms,_srcAux,out _auxEventSyncUsed);
-                        if(_auxOut!=null){ _auxIsExclusive=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(fmt32); auxTargetFmt=fmt32; _auxResampling=needRateChange; _auxNoSRC=!needRateChange; }
+                        if(_auxOut!=null){ (_auxShareMode==AudioClientShareMode.Exclusive)=true; _auxBufEffectiveMs=ms; _auxFmtStr=Fmt(fmt32); auxTargetFmt=fmt32; _auxResampling=needRateChange; _auxNoSRC=!needRateChange; }
                     }
                 }
                 if(_auxOut==null && _cfg.AuxShare==ShareModeOption.Exclusive){ MessageBox.Show("副通道独占失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Warning); Cleanup(); return; }
@@ -417,7 +417,7 @@ public bool MainMultiSRC, AuxMultiSRC;
 
             _capture.DataAvailable+=OnIn; _capture.RecordingStopped+=OnStopRec;
             try{
-                _capture.StartRecording();
+                if(Logger.Enabled) Logger.Info("输入开始录制: " + _inDev.FriendlyName + " / " + inFmt); _capture.StartRecording();
             try{
                 int waited=0;
                 int mainTarget = Math.Max( (int)(_cfg.MainBufMs*0.6), 20 );
@@ -429,10 +429,10 @@ public bool MainMultiSRC, AuxMultiSRC;
                     System.Threading.Thread.Sleep(5);
                 }
             }catch{}
-            _mainOut.Play(); _auxOut.Play(); _running=true;
+            _mainOut.Play();\n                CheckChannelNote(_outMain, "主输出"); _auxOut.Play();\n                CheckChannelNote(_outAux, "副输出"); _running=true;
                 if(Logger.Enabled){
-                    Logger.Info("Main: "+(_mainIsExclusive?"独占":"共享")+" | "+(_mainEventSyncUsed?"事件":"轮询")+" | "+_mainBufEffectiveMs+"ms");
-                    Logger.Info("Aux : "+(_auxIsExclusive ?"独占":"共享")+" | "+(_auxEventSyncUsed ?"事件":"轮询")+" | "+_auxBufEffectiveMs +"ms");
+                    Logger.Info("Main: "+((_mainShareMode==AudioClientShareMode.Exclusive)?"独占":"共享")+" | "+(_mainEventSyncUsed?"事件":"轮询")+" | "+_mainBufEffectiveMs+"ms");
+                    Logger.Info("Aux : "+((_auxShareMode==AudioClientShareMode.Exclusive) ?"独占":"共享")+" | "+(_auxEventSyncUsed ?"事件":"轮询")+" | "+_auxBufEffectiveMs +"ms");
                 }
             }
             catch(Exception ex){ Logger.Crash("Start",ex); MessageBox.Show("启动失败："+ex.Message,"MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Stop(); }
@@ -467,11 +467,11 @@ public bool MainMultiSRC, AuxMultiSRC;
             double mainMul = 0, auxMul = 0;
             try {
                 if (_mainBufEffectiveMs > 0) {
-                    double baseMs = (_mainIsExclusive && _minMainMs > 0) ? _minMainMs : _defMainMs;
+                    double baseMs = ((_mainShareMode==AudioClientShareMode.Exclusive) && _minMainMs > 0) ? _minMainMs : _defMainMs;
                     if (baseMs > 0) mainMul = Math.Round(_mainBufEffectiveMs / baseMs, 2);
                 }
                 if (_auxBufEffectiveMs > 0) {
-                    double baseMs = (_auxIsExclusive && _minAuxMs > 0) ? _minAuxMs : _defAuxMs;
+                    double baseMs = ((_auxShareMode==AudioClientShareMode.Exclusive) && _minAuxMs > 0) ? _minAuxMs : _defAuxMs;
                     if (baseMs > 0) auxMul = Math.Round(_auxBufEffectiveMs / baseMs, 2);
                 }
             } catch {}
@@ -482,7 +482,7 @@ bool auxInternal  = _resAux  != null;
 
 bool mainMulti = false, auxMulti = false;
 try {
-    if (!_mainIsExclusive && mainInternal) {
+    if (!(_mainShareMode==AudioClientShareMode.Exclusive) && mainInternal) {
         WaveFormat mix = null; try { mix = _outMain.AudioClient.MixFormat; } catch {}
         if (mix != null && _resMain != null) {
             var f = _resMain.WaveFormat;
@@ -492,7 +492,7 @@ try {
             mainMulti = false;
         }
     }
-    if (!_auxIsExclusive && auxInternal) {
+    if (!(_auxShareMode==AudioClientShareMode.Exclusive) && auxInternal) {
         WaveFormat mix = null; try { mix = _outAux.AudioClient.MixFormat; } catch {}
         if (mix != null && _resAux != null) {
             var f = _resAux.WaveFormat;
@@ -509,8 +509,8 @@ return new StatusSnapshot{
                 InputRequested=_inReqStr, InputAccepted=_inAccStr, InputMix=_inMixStr,
                 MainDevice=_outMain!=null?_outMain.FriendlyName:SafeName(_cfg.MainDeviceId, DataFlow.Render),
                 AuxDevice =_outAux !=null?_outAux .FriendlyName:SafeName(_cfg.AuxDeviceId , DataFlow.Render),
-                MainMode=_mainOut!=null?(_mainIsExclusive?"独占":"共享"):"-",
-                AuxMode =_auxOut !=null?(_auxIsExclusive ?"独占":"共享"):"-",
+                MainMode=_mainOut!=null?((_mainShareMode==AudioClientShareMode.Exclusive)?"独占":"共享"):"-",
+                AuxMode =_auxOut !=null?((_auxShareMode==AudioClientShareMode.Exclusive) ?"独占":"共享"):"-",
                 MainSync=_mainOut!=null?(_mainEventSyncUsed?"事件":"轮询"):"-",
                 AuxSync =_auxOut !=null?(_auxEventSyncUsed ?"事件":"轮询"):"-",
                 MainFormat=_mainOut!=null?_mainFmtStr:"-",
@@ -799,3 +799,39 @@ return new StatusSnapshot{
         }
     }
 }
+// —— 设备周期工具 & 缓冲吸附 ——
+private static double HnsToMs(long hns) => hns / 10000.0; // 100ns -> ms
+private static int CeilToMultiple(int value, int step)
+{
+    if (step <= 0) return value;
+    int r = value % step;
+    return r == 0 ? value : value + (step - r);
+}
+private int ComputeAlignedBufferMs(MMDevice dev, int requestedMs, BufferAlignMode mode, AudioClientShareMode share)
+{
+    try
+    {
+        var ac = dev.AudioClient;
+        long defHns = ac.DefaultDevicePeriod;
+        long minHns = ac.MinimumDevicePeriod;
+        int defMs = (int)Math.Max(1, Math.Round(HnsToMs(defHns)));
+        int minMs = (int)Math.Max(1, Math.Round(HnsToMs(minHns)));
+
+        int minBase = Math.Max(2, minMs);
+        int target = Math.Max(3, requestedMs);
+
+        if (mode == BufferAlignMode.MinAlign)
+        {
+            int k = Math.Max(1, target / minBase);
+            target = k * minBase;
+        }
+        else
+        {
+            target = CeilToMultiple(target, defMs);
+        }
+        int guard = share == AudioClientShareMode.Shared ? Math.Max(minBase * 3, 10) : minBase;
+        return Math.Max(guard, target);
+    }
+    catch { return Math.Max(10, requestedMs); }
+}
+
