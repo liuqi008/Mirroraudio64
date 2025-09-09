@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Linq;
 using System.Windows.Forms;
 
 namespace MirrorAudio
@@ -8,28 +7,25 @@ namespace MirrorAudio
     public partial class SettingsForm : Form
     {
         private readonly Func<StatusSnapshot> _getStatus;
-        private readonly AppSettings _cfg;
+        private AppSettings _cfg;
 
-        // —— UI 控件（仅列与本补丁相关的关键控件）——
-        ComboBox cmbInput, cmbMain, cmbAux;
-        ComboBox cmbShareMain, cmbShareAux, cmbSyncMain, cmbSyncAux, cmbBufModeMain, cmbBufModeAux;
-        NumericUpDown numBufMain, numBufAux, numRateMain, numBitsMain, numRateAux, numBitsAux;
-        ComboBox cmbResampMain, cmbResampAux;
-        CheckBox chkMainForceInShared, chkAuxForceInShared;
-        CheckBox chkAutoStart, chkLogging;
-        ComboBox cmbInStrategy; NumericUpDown numInRate, numInBits;
-
-        Label lblMainResampHint, lblAuxResampHint;
-        Button btnOk, btnCancel, btnApply, btnInit;
+        // —— UI 控件 ——
+        private ComboBox cmbInput, cmbMain, cmbAux;
+        private ComboBox cmbShareMain, cmbShareAux, cmbSyncMain, cmbSyncAux, cmbBufModeMain, cmbBufModeAux;
+        private NumericUpDown numBufMain, numBufAux, numRateMain, numBitsMain, numRateAux, numBitsAux;
+        private ComboBox cmbResampMain, cmbResampAux;
+        private CheckBox chkMainForceInShared, chkAuxForceInShared;
+        private CheckBox chkAutoStart, chkLogging;
+        private ComboBox cmbInStrategy; private NumericUpDown numInRate, numInBits;
+        private Label lblMainResampHint, lblAuxResampHint;
+        private Button btnOk, btnCancel, btnApply, btnInit;
 
         public AppSettings Result { get; private set; }
-
-        // 对外事件：“应用(不关闭)”
         public event Action<AppSettings> ApplyRequested;
 
         public SettingsForm(AppSettings cfg, Func<StatusSnapshot> getStatus)
         {
-            _cfg = cfg; // 由上层决定是否 Clone
+            _cfg = cfg;
             _getStatus = getStatus;
 
             InitializeComponent();
@@ -40,11 +36,11 @@ namespace MirrorAudio
 
         private void InitializeComponent()
         {
-            this.Text = "MirrorAudio 设置";
-            this.StartPosition = FormStartPosition.CenterScreen;
-            this.Size = new Size(880, 640);
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
+            Text = "MirrorAudio 设置";
+            StartPosition = FormStartPosition.CenterScreen;
+            Size = new Size(900, 680);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
         }
 
         private void BuildUi()
@@ -59,17 +55,16 @@ namespace MirrorAudio
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            this.Controls.Add(root);
+            Controls.Add(root);
 
-            // —— 顶部：输入配置（录音/环回只共享）——
+            // —— 输入（固定共享） ——
             var grpInput = new GroupBox { Text = "输入（固定共享）", Dock = DockStyle.Top, Padding = new Padding(10) };
             var pIn = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 2 };
             grpInput.Controls.Add(pIn);
             root.Controls.Add(grpInput);
 
             cmbInput = NewCombo();
-            cmbInStrategy = NewCombo();
-            cmbInStrategy.Items.AddRange(new object[] { "系统混音", "自定义", "32f优先" });
+            cmbInStrategy = NewCombo(); cmbInStrategy.Items.AddRange(new object[] { "系统混音", "自定义", "32f优先" });
             numInRate = NewNum(8000, 768000, 48000);
             numInBits = NewNum(8, 32, 24);
 
@@ -79,7 +74,7 @@ namespace MirrorAudio
                 new Label { Text = "自定义SR/Bit：" }, HStack(numInRate, new Label { Text = "Hz   " }, numInBits, new Label { Text = "bit" })
             );
 
-            // —— 中部：主/副输出完全对称 —— 
+            // —— 输出（主/副对称） ——
             var grpOut = new GroupBox { Text = "输出", Dock = DockStyle.Fill, Padding = new Padding(10) };
             root.Controls.Add(grpOut);
             var pOut = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 8, AutoScroll = true };
@@ -119,7 +114,7 @@ namespace MirrorAudio
             AddRow(pOut, new Label { Text = "副缓冲(ms)：" }, numBufAux, new Label { Text = "缓冲对齐：" }, cmbBufModeAux, new Label { Text = "SR/Bit：" }, HStack(numRateAux, new Label { Text = "Hz   " }, numBitsAux, new Label { Text = "bit" }));
             AddRow(pOut, new Label { Text = "重采样质量：" }, HStack(cmbResampAux, lblAuxResampHint), new Label { Text = "" }, chkAuxForceInShared, new Label { Text = "" }, new Label { Text = "" });
 
-            // —— 底部：其他开关 —— 
+            // —— 其他 ——
             var grpOther = new GroupBox { Text = "其他", Dock = DockStyle.Top, Padding = new Padding(10) };
             root.Controls.Add(grpOther);
             var pO = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
@@ -151,18 +146,28 @@ namespace MirrorAudio
             cmbInput.SelectedIndex = 0; cmbMain.SelectedIndex = 0; cmbAux.SelectedIndex = 0;
         }
 
-        private static ComboBox NewCombo() => new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
-        private static NumericUpDown NewNum(int min, int max, int val) => new NumericUpDown { Minimum = min, Maximum = max, Value = val, Increment = 1, Dock = DockStyle.Fill };
+        private static ComboBox NewCombo()
+        {
+            return new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+        }
+
+        private static NumericUpDown NewNum(int min, int max, int val)
+        {
+            return new NumericUpDown { Minimum = min, Maximum = max, Value = val, Increment = 1, Dock = DockStyle.Fill };
+        }
+
         private static Control HStack(params Control[] cs)
         {
             var p = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, WrapContents = false, Dock = DockStyle.Fill };
             foreach (var c in cs) p.Controls.Add(c);
             return p;
         }
+
         private static void AddRow(TableLayoutPanel t, params Control[] cs)
         {
             var r = t.RowCount++;
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            t.ColumnCount = 6;
             t.ColumnStyles.Clear();
             for (int i = 0; i < t.ColumnCount; i++) t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / t.ColumnCount));
             for (int i = 0; i < cs.Length; i++) t.Controls.Add(cs[i], i, r);
@@ -200,12 +205,19 @@ namespace MirrorAudio
             chkLogging.Checked = c.EnableLogging;
         }
 
-        private int ToIdx(ShareModeOption s) => s == ShareModeOption.Exclusive ? 1 : s == ShareModeOption.Shared ? 2 : 0;
-        private int ToIdx(SyncModeOption s) => s == SyncModeOption.Event ? 1 : s == SyncModeOption.Polling ? 2 : 0;
+        private int ToIdx(ShareModeOption s)
+        {
+            return s == ShareModeOption.Exclusive ? 1 : s == ShareModeOption.Shared ? 2 : 0;
+        }
+
+        private int ToIdx(SyncModeOption s)
+        {
+            return s == SyncModeOption.Event ? 1 : s == SyncModeOption.Polling ? 2 : 0;
+        }
 
         private AppSettings BuildCurrentSettings()
         {
-            var s = _cfg; // 直接回写
+            var s = _cfg;
 
             // 输入
             s.InputFormatStrategy = (InputFormatStrategy)cmbInStrategy.SelectedIndex;
@@ -217,7 +229,7 @@ namespace MirrorAudio
             s.MainSync  = cmbSyncMain .SelectedIndex == 1 ? SyncModeOption.Event    : (cmbSyncMain .SelectedIndex == 2 ? SyncModeOption.Polling  : SyncModeOption.Auto);
             s.MainBufMode = (cmbBufModeMain.SelectedIndex == 1) ? BufferAlignMode.MinAlign : BufferAlignMode.DefaultAlign;
             s.MainBufMs = (int)numBufMain.Value;
-            s.MainRate = (int)numRateMain.Value; // 不动 SR/位深时，初始化逻辑会覆盖延迟策略但不改这两个
+            s.MainRate = (int)numRateMain.Value;
             s.MainBits = (int)numBitsMain.Value;
             s.MainResamplerQuality = int.Parse((string)cmbResampMain.SelectedItem);
             s.MainForceInternalResamplerInShared = chkMainForceInShared.Checked;
@@ -247,7 +259,7 @@ namespace MirrorAudio
             cmbBufModeMain.SelectedIndex = 1; // 最小对齐
             numBufMain.Value = Math.Min(Math.Max(12, (int)numBufMain.Minimum), (int)numBufMain.Maximum);
             cmbResampMain.SelectedItem = "50";
-            chkMainForceInShared.Checked = false; // 共享下不强制程序内重采样
+            chkMainForceInShared.Checked = false;
         }
 
         private void Preset_Aux_Standard()
@@ -262,10 +274,10 @@ namespace MirrorAudio
 
         private void RefreshResamplerQualityEnabled()
         {
-            var st = _getStatus?.Invoke();
+            var st = _getStatus != null ? _getStatus() : null;
 
-            bool mainEnable = st?.MainInternalResampler ?? false;
-            bool auxEnable  = st?.AuxInternalResampler  ?? false;
+            bool mainEnable = st != null && st.MainInternalResampler;
+            bool auxEnable  = st != null && st.AuxInternalResampler;
 
             cmbResampMain.Enabled = mainEnable;
             lblMainResampHint.Visible = !mainEnable;
@@ -275,15 +287,3 @@ namespace MirrorAudio
         }
     }
 }
-
-        private void RefreshStatusLabels()
-        {
-            var st = _getStatus?.Invoke();
-            if (st != null)
-            {
-                lblStatusMainInternal.Text = (st.MainInternalResampler ? "是" : "否");
-                lblStatusMainMulti.Text    = (st.MainMultiSRC ? "是" : "否");
-                lblStatusAuxInternal.Text  = (st.AuxInternalResampler ? "是" : "否");
-                lblStatusAuxMulti.Text     = (st.AuxMultiSRC ? "是" : "否");
-            }
-        }
