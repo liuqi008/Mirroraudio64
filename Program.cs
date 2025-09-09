@@ -1,7 +1,4 @@
 using System;
-using System.Drawing;
-using System.Runtime.InteropServices;
-using System.Threading;
 using System.Windows.Forms;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
@@ -42,8 +39,7 @@ namespace MirrorAudio
         private bool _mainEventSyncUsed;
         private bool _mainResampling;
         private bool _mainNoSRC;
-        private ShareMode _mainShareModeNA; // NAudio
-        private AudioClientShareMode _mainShareMode; // 记录是独占/共享
+        private AudioClientShareMode _mainShareMode;
 
         // 副输出
         private MMDevice _outAux;
@@ -53,7 +49,6 @@ namespace MirrorAudio
         private bool _auxEventSyncUsed;
         private bool _auxResampling;
         private bool _auxNoSRC;
-        private ShareMode _auxShareModeNA;
         private AudioClientShareMode _auxShareMode;
 
         // 设备管理
@@ -77,7 +72,7 @@ namespace MirrorAudio
 
             _icon = new NotifyIcon
             {
-                Icon = SystemIcons.Application,
+                Icon = System.Drawing.SystemIcons.Application,
                 Visible = true,
                 Text = "MirrorAudio",
                 ContextMenuStrip = _menu
@@ -184,7 +179,7 @@ namespace MirrorAudio
                         _mainResampling = true; _mainNoSRC = false;
                     }
                 }
-                _mainOut = new WasapiOut(_outMain, ShareMode.Shared, _cfg.MainSync == SyncModeOption.Event, ms);
+                _mainOut = new WasapiOut(_outMain, AudioClientShareMode.Shared, _cfg.MainSync == SyncModeOption.Event, ms);
                 _mainOut.Init(feed);
                 _mainOut.Play();
             }
@@ -197,7 +192,7 @@ namespace MirrorAudio
                     feed = _resMain;
                     _mainResampling = true; _mainNoSRC = false;
                 }
-                _mainOut = new WasapiOut(_outMain, ShareMode.Exclusive, _cfg.MainSync == SyncModeOption.Event, ms);
+                _mainOut = new WasapiOut(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync == SyncModeOption.Event, ms);
                 _mainOut.Init(feed);
                 _mainOut.Play();
             }
@@ -227,7 +222,7 @@ namespace MirrorAudio
                         _auxResampling = true; _auxNoSRC = false;
                     }
                 }
-                _auxOut = new WasapiOut(_outAux, ShareMode.Shared, _cfg.AuxSync == SyncModeOption.Event, ms);
+                _auxOut = new WasapiOut(_outAux, AudioClientShareMode.Shared, _cfg.AuxSync == SyncModeOption.Event, ms);
                 _auxOut.Init(feed);
                 _auxOut.Play();
             }
@@ -240,7 +235,7 @@ namespace MirrorAudio
                     feed = _resAux;
                     _auxResampling = true; _auxNoSRC = false;
                 }
-                _auxOut = new WasapiOut(_outAux, ShareMode.Exclusive, _cfg.AuxSync == SyncModeOption.Event, ms);
+                _auxOut = new WasapiOut(_outAux, AudioClientShareMode.Exclusive, _cfg.AuxSync == SyncModeOption.Event, ms);
                 _auxOut.Init(feed);
                 _auxOut.Play();
             }
@@ -260,19 +255,16 @@ namespace MirrorAudio
 
         private int BufAligned(int reqMs, BufferAlignMode mode)
         {
-            // 简化：不查询设备最小周期，直接限幅
-            var v = Math.Max(3, Math.Min(500, reqMs));
+            var v = Math.Max(3, Math.Min(800, reqMs));
             if (mode == BufferAlignMode.MinAlign)
             {
-                // 近似对齐到 3/4 倍（你项目里可改为“设备最小周期×3/4”精确对齐）
-                if (v < 12) v = 12;
+                if (v < 12) v = 12; // 近似按最小周期×3/4
             }
             return v;
         }
 
         public StatusSnapshot GetStatusSnapshot()
         {
-            // 多次 SRC：仅在共享且我们内部已做过重采样，且目标 != 设备 MixFormat
             bool mainInternal = (_resMain != null);
             bool auxInternal  = (_resAux  != null);
 
@@ -315,55 +307,5 @@ namespace MirrorAudio
             _icon?.Dispose();
             _enum?.Dispose();
         }
-    }
-
-    // —— 与 SettingsForm.cs 保持一致的模型枚举 —— //
-    public enum ShareModeOption { Auto = 0, Exclusive = 1, Shared = 2 }
-    public enum SyncModeOption { Auto = 0, Event = 1, Polling = 2 }
-    public enum BufferAlignMode { DefaultAlign = 0, MinAlign = 1 }
-    public enum InputFormatStrategy { SystemMix = 0, Custom = 1, Float32Prefer = 2 }
-
-    public class AppSettings
-    {
-        public string InputDeviceId;
-        public string MainDeviceId;
-        public string AuxDeviceId;
-
-        public ShareModeOption MainShare = ShareModeOption.Auto;
-        public ShareModeOption AuxShare = ShareModeOption.Auto;
-        public SyncModeOption MainSync = SyncModeOption.Auto;
-        public SyncModeOption AuxSync = SyncModeOption.Auto;
-
-        public int MainRate = 48000;
-        public int MainBits = 24;
-        public int AuxRate = 48000;
-        public int AuxBits = 24;
-
-        public int MainBufMs = 12;
-        public int AuxBufMs = 150;
-        public BufferAlignMode MainBufMode = BufferAlignMode.MinAlign;
-        public BufferAlignMode AuxBufMode = BufferAlignMode.DefaultAlign;
-
-        public int MainResamplerQuality = 50;
-        public int AuxResamplerQuality = 30;
-        public bool MainForceInternalResamplerInShared = false;
-        public bool AuxForceInternalResamplerInShared = false;
-
-        public bool AutoStart = false;
-        public bool EnableLogging = true;
-
-        public InputFormatStrategy InputFormatStrategy = InputFormatStrategy.SystemMix;
-        public int InputCustomSampleRate = 48000;
-        public int InputCustomBitDepth = 24;
-
-        public AppSettings Clone() => (AppSettings)MemberwiseClone();
-    }
-
-    public class StatusSnapshot
-    {
-        public bool MainInternalResampler { get; set; }
-        public bool AuxInternalResampler { get; set; }
-        public bool MainMultiSRC { get; set; }
-        public bool AuxMultiSRC { get; set; }
     }
 }
