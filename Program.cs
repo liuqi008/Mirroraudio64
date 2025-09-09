@@ -114,7 +114,8 @@ namespace MirrorAudio
         
 public bool MainInternalResampler, AuxInternalResampler;
 public bool MainMultiSRC, AuxMultiSRC;
-
+        public int MainInternalResamplerQuality;
+        public int AuxInternalResamplerQuality;
     }
 
     static class Config
@@ -367,11 +368,37 @@ public bool MainMultiSRC, AuxMultiSRC;
             if(_mainOut==null)
             {
                 int ms=BufAligned(_cfg.MainBufMs,false,_defMainMs,0,_cfg.MainBufMode);
-                _mainOut=CreateOut(_outMain,AudioClientShareMode.Shared,_cfg.MainSync,ms,_bufMain,out _mainEventSyncUsed);
-                if(_mainOut==null){ MessageBox.Show("主通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
-                _mainBufEffectiveMs=ms; try{ mainTargetFmt=_outMain.AudioClient.MixFormat; _mainFmtStr=Fmt(mainTargetFmt);}catch{ _mainFmtStr="系统混音"; }
-                _mainResampling = (inFmt.SampleRate != (mainTargetFmt!=null?mainTargetFmt.SampleRate:inFmt.SampleRate) || inFmt.Channels != (mainTargetFmt!=null?mainTargetFmt.Channels:inFmt.Channels));
-                _mainNoSRC = !_mainResampling;
+                
+{
+    IWaveProvider mainFeed = _bufMain;
+    try { mainTargetFmt = _outMain.AudioClient.MixFormat; } catch { mainTargetFmt = null; }
+    if (_cfg.MainForceInternalResamplerInShared && mainTargetFmt != null)
+    {
+        bool needChange = mainFeed.WaveFormat.SampleRate != mainTargetFmt.SampleRate
+                           || mainFeed.WaveFormat.Channels != mainTargetFmt.Channels
+                           || mainFeed.WaveFormat.BitsPerSample != mainTargetFmt.BitsPerSample;
+        if (needChange)
+        {
+            _srcMain = _resMain = new MediaFoundationResampler(mainFeed, mainTargetFmt){ ResamplerQuality = _cfg.MainResamplerQuality };
+            mainFeed = _srcMain; _mainResampling = true; _mainNoSRC = false;
+        }
+        else
+        {
+            _srcMain = mainFeed;
+        }
+    }
+    else
+    {
+        _srcMain = mainFeed;
+    }
+    _mainOut = CreateOut(_outMain, AudioClientShareMode.Shared, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
+    if(_mainOut==null){ MessageBox.Show("主通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
+    _mainBufEffectiveMs = ms;
+    try { if (mainTargetFmt == null) mainTargetFmt = _outMain.AudioClient.MixFormat; _mainFmtStr = Fmt(mainTargetFmt); } catch { _mainFmtStr = "系统混音"; }
+    _mainResampling = _mainResampling || (inFmt.SampleRate != (mainTargetFmt!=null?mainTargetFmt.SampleRate:inFmt.SampleRate) || inFmt.Channels != (mainTargetFmt!=null?mainTargetFmt.Channels:inFmt.Channels));
+    _mainNoSRC = !_mainResampling;
+}
+
             }
 
             // —— 副通道 —— //
@@ -408,11 +435,37 @@ public bool MainMultiSRC, AuxMultiSRC;
             if(_auxOut==null)
             {
                 int ms=BufAligned(_cfg.AuxBufMs,false,_defAuxMs,0,_cfg.AuxBufMode);
-                _auxOut=CreateOut(_outAux,AudioClientShareMode.Shared,_cfg.AuxSync,ms,_bufAux,out _auxEventSyncUsed);
-                if(_auxOut==null){ MessageBox.Show("副通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
-                _auxBufEffectiveMs=ms; try{ auxTargetFmt=_outAux.AudioClient.MixFormat; _auxFmtStr=Fmt(auxTargetFmt);}catch{ _auxFmtStr="系统混音"; }
-                _auxResampling = (inFmt.SampleRate != (auxTargetFmt!=null?auxTargetFmt.SampleRate:inFmt.SampleRate) || inFmt.Channels != (auxTargetFmt!=null?auxTargetFmt.Channels:inFmt.Channels));
-                _auxNoSRC = !_auxResampling;
+                
+{
+    IWaveProvider auxFeed = _bufAux;
+    try { auxTargetFmt = _outAux.AudioClient.MixFormat; } catch { auxTargetFmt = null; }
+    if (_cfg.AuxForceInternalResamplerInShared && auxTargetFmt != null)
+    {
+        bool needChange = auxFeed.WaveFormat.SampleRate != auxTargetFmt.SampleRate
+                           || auxFeed.WaveFormat.Channels != auxTargetFmt.Channels
+                           || auxFeed.WaveFormat.BitsPerSample != auxTargetFmt.BitsPerSample;
+        if (needChange)
+        {
+            _srcAux = _resAux = new MediaFoundationResampler(auxFeed, auxTargetFmt){ ResamplerQuality = _cfg.AuxResamplerQuality };
+            auxFeed = _srcAux; _auxResampling = true; _auxNoSRC = false;
+        }
+        else
+        {
+            _srcAux = auxFeed;
+        }
+    }
+    else
+    {
+        _srcAux = auxFeed;
+    }
+    _auxOut = CreateOut(_outAux, AudioClientShareMode.Shared, _cfg.AuxSync, ms, _srcAux, out _auxEventSyncUsed);
+    if(_auxOut==null){ MessageBox.Show("副通道初始化失败。","MirrorAudio",MessageBoxButtons.OK,MessageBoxIcon.Error); Cleanup(); return; }
+    _auxBufEffectiveMs = ms;
+    try { if (auxTargetFmt == null) auxTargetFmt = _outAux.AudioClient.MixFormat; _auxFmtStr = Fmt(auxTargetFmt); } catch { _auxFmtStr = "系统混音"; }
+    _auxResampling = _auxResampling || (inFmt.SampleRate != (auxTargetFmt!=null?auxTargetFmt.SampleRate:inFmt.SampleRate) || inFmt.Channels != (auxTargetFmt!=null?auxTargetFmt.Channels:inFmt.Channels));
+    _auxNoSRC = !_auxResampling;
+}
+
             }
 
             _capture.DataAvailable+=OnIn; _capture.RecordingStopped+=OnStopRec;
@@ -525,6 +578,8 @@ return new StatusSnapshot{
                 AuxBufferMultiple =(_auxBufEffectiveMs >0 && _minAuxMs >0)? _auxBufEffectiveMs /_minAuxMs:0,
                 MainInternalResampler=mainInternal, AuxInternalResampler=auxInternal,
                 MainMultiSRC=mainMulti, AuxMultiSRC=auxMulti,
+                , MainInternalResamplerQuality = (_resMain!=null ? _resMain.ResamplerQuality : 0)
+                , AuxInternalResamplerQuality  = (_resAux !=null ? _resAux .ResamplerQuality : 0)
             };
         }
 
