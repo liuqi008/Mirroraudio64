@@ -248,7 +248,6 @@ namespace MirrorAudio
 
         private void Capture_DataAvailable(object sender, WaveInEventArgs e)
         {
-            // 同步写入主/副环形缓冲；不足则自然丢弃（DiscardOnBufferOverflow=true）
             _bufMain?.AddSamples(e.Buffer, 0, e.BytesRecorded);
             _bufAux ?.AddSamples(e.Buffer, 0, e.BytesRecorded);
         }
@@ -258,7 +257,7 @@ namespace MirrorAudio
             var v = Math.Max(3, Math.Min(800, reqMs));
             if (mode == BufferAlignMode.MinAlign)
             {
-                if (v < 12) v = 12; // 近似按最小周期×3/4
+                if (v < 12) v = 12;
             }
             return v;
         }
