@@ -504,25 +504,28 @@ try {
 } catch {}
 
 return new StatusSnapshot{
-
                 Running=_running,
                 InputRole=_inRoleStr, InputFormat=_inFmtStr, InputDevice=_inDevName,
                 InputRequested=_inReqStr, InputAccepted=_inAccStr, InputMix=_inMixStr,
-                MainDevice=_outMain!=null?_outMain.FriendlyName:SafeName(_cfg.MainDeviceId,DataFlow.Render),
-                AuxDevice =_outAux !=null?_outAux .FriendlyName:SafeName(_cfg.AuxDeviceId ,DataFlow.Render),
-                MainMode=_mainOut!=null?(_mainIsExclusive?"独占":"共享"):"-", AuxMode=_auxOut!=null?(_auxIsExclusive?"独占":"共享"):"-",
-                MainSync=_mainOut!=null?(_mainEventSyncUsed?"事件":"轮询"):"-",  AuxSync=_auxOut!=null?(_auxEventSyncUsed?"事件":"轮询"):"-",
-                MainFormat=_mainOut!=null?_mainFmtStr:"-", AuxFormat=_auxOut!=null?_auxFmtStr:"-",
+                MainDevice=_outMain!=null?_outMain.FriendlyName:SafeName(_cfg.MainDeviceId, DataFlow.Render),
+                AuxDevice =_outAux !=null?_outAux .FriendlyName:SafeName(_cfg.AuxDeviceId , DataFlow.Render),
+                MainMode=_mainOut!=null?(_mainIsExclusive?"独占":"共享"):"-",
+                AuxMode =_auxOut !=null?(_auxIsExclusive ?"独占":"共享"):"-",
+                MainSync=_mainOut!=null?(_mainEventSyncUsed?"事件":"轮询"):"-",
+                AuxSync =_auxOut !=null?(_auxEventSyncUsed ?"事件":"轮询"):"-",
+                MainFormat=_mainOut!=null?_mainFmtStr:"-",
+                AuxFormat =_auxOut !=null?_auxFmtStr:"-",
                 MainBufferRequestedMs=_cfg.MainBufMs, AuxBufferRequestedMs=_cfg.AuxBufMs,
                 MainBufferMs=_mainOut!=null?_mainBufEffectiveMs:0, AuxBufferMs=_auxOut!=null?_auxBufEffectiveMs:0,
-                MainDefaultPeriodMs=_defMainMs, MainMinimumPeriodMs=_minMainMs, AuxDefaultPeriodMs=_defAuxMs, AuxMinimumPeriodMs=_minAuxMs,
+                MainDefaultPeriodMs=_defMainMs, MainMinimumPeriodMs=_minMainMs,
+                AuxDefaultPeriodMs=_defAuxMs, AuxMinimumPeriodMs=_minAuxMs,
                 MainAlignedMultiple=mainMul, AuxAlignedMultiple=auxMul,
                 MainNoSRC=_mainNoSRC, AuxNoSRC=_auxNoSRC, MainResampling=_mainResampling, AuxResampling=_auxResampling,
                 MainBufferMultiple=(_mainBufEffectiveMs>0 && _minMainMs>0)? _mainBufEffectiveMs/_minMainMs:0,
-                AuxBufferMultiple =(_auxBufEffectiveMs >0 && _minAuxMs >0)? _auxBufEffectiveMs /_minAuxMs:0
-            
+                AuxBufferMultiple =(_auxBufEffectiveMs >0 && _minAuxMs >0)? _auxBufEffectiveMs /_minAuxMs:0,
                 MainInternalResampler=mainInternal, AuxInternalResampler=auxInternal,
-                MainMultiSRC=mainMulti, AuxMultiSRC=auxMulti,};
+                MainMultiSRC=mainMulti, AuxMultiSRC=auxMulti,
+            };
         }
 
         string SafeName(string id, DataFlow flow)
