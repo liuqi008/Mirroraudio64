@@ -140,7 +140,9 @@ namespace MirrorAudio
         bool _running;
         bool _mainExclusive, _auxExclusive;
         bool _mainEventSyncUsed, _auxEventSyncUsed;
-        int _mainBufEffectiveMs, _auxBufEffectiveMs;
+        
+        bool _inExclusive = false;
+int _mainBufEffectiveMs, _auxBufEffectiveMs;
         string _inRoleStr = "-", _inFmtStr = "-", _inDevName = "-", _mainFmtStr = "-", _auxFmtStr = "-";
         string _inReqStr = "-", _inAccStr = "-", _inMixStr = "-";
         bool _mainNoSRC, _auxNoSRC, _mainResampling, _auxResampling;
