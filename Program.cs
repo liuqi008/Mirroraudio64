@@ -500,8 +500,7 @@ namespace MirrorAudio
                 MainDefaultPeriodMs = _defMainMs, MainMinimumPeriodMs = _minMainMs,
                 AuxDefaultPeriodMs  = _defAuxMs,  AuxMinimumPeriodMs  = _minAuxMs,
 
-                MainAlignedMultiple = mainMul, AuxAlignedMultiple = auxMul,
-                , VirtualCableActive = _virtCapActive
+                MainAlignedMultiple = mainMul, AuxAlignedMultiple = auxMul, VirtualCableActive = _virtCapActive
 
                 MainNoSRC = _mainNoSRC, AuxNoSRC = _auxNoSRC,
                 MainResampling = _mainResampling, AuxResampling = _auxResampling,
