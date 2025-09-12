@@ -775,19 +775,6 @@ namespace MirrorAudio
             StopRecording();
         }
     }
-tring();
-                return closest;
-            }
-            if (ok)
-            {
-                acceptedFormat = desired;
-                log = sb.ToString();
-                return desired;
-            }
-            log = sb.ToString();
-            return null;
-        }
-    }
 
     static class Logger
     {
