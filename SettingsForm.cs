@@ -8,6 +8,7 @@ namespace MirrorAudio
 {
     sealed class SettingsForm : Form
     {
+    readonly CheckBox chkInputExclusive = new CheckBox();
         readonly Label lblRun=new Label(),
                        lblInput=new Label(),
                        lblInputReq=new Label(),
@@ -103,7 +104,12 @@ namespace MirrorAudio
             cmbMain.DropDownStyle  = ComboBoxStyle.DropDownList;
             cmbAux.DropDownStyle   = ComboBoxStyle.DropDownList;
 
-            AddRow(tDev, "通道1 输入设备",  cmbInput);
+            
+var pIn = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
+chkInputExclusive.Text = "独占（仅录音）";
+pIn.Controls.Add(cmbInput);
+pIn.Controls.Add(chkInputExclusive);
+AddRow(tDev, "通道1 输入设备", pIn);
             AddRow(tDev, "通道2 主输出设备", cmbMain);
             AddRow(tDev, "通道3 副输出设备", cmbAux);
 
@@ -239,7 +245,7 @@ namespace MirrorAudio
 
         void LoadConfig(AppSettings cur)
         {
-            Result = new AppSettings
+            chkInputExclusive.Checked = cur.InputExclusive;Result = new AppSettings
             {
                 InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
                 MainShare = cur.MainShare, MainSync = cur.MainSync, MainRate = cur.MainRate, MainBits = cur.MainBits, MainBufMs = cur.MainBufMs,
@@ -286,7 +292,7 @@ namespace MirrorAudio
         {
             StatusSnapshot s; try { s = _statusProvider(); } catch { s = new StatusSnapshot(); }
             lblRun.Text = s.Running ? "运行中" : "停止";
-            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | 实得: " + (s.InputFormat ?? "-");
+            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | 实得: " + (s.InputFormat ?? "-"); + " | 独占=" + (s.InputExclusive ? "是" : "否")
             lblInputReq.Text = "请求: " + (s.InputRequested ?? "-") + "  |  接受: " + (s.InputAccepted ?? "-") + "  |  混音: " + (s.InputMix ?? "-");
 
             lblMain.Text = (s.MainDevice ?? "-") + " | " + (s.MainMode ?? "-") + " | " + (s.MainSync ?? "-");
