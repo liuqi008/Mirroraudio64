@@ -57,6 +57,7 @@ namespace MirrorAudio
     [DataContract]
     public sealed class AppSettings
     {
+        [DataMember] public bool InputExclusive = false;
         [DataMember] public string InputDeviceId, MainDeviceId, AuxDeviceId;
         [DataMember] public ShareModeOption MainShare = ShareModeOption.Auto, AuxShare = ShareModeOption.Shared;
         [DataMember] public SyncModeOption MainSync = SyncModeOption.Auto, AuxSync = SyncModeOption.Auto;
@@ -78,6 +79,7 @@ namespace MirrorAudio
 
     public sealed class StatusSnapshot
     {
+        public bool InputExclusive;
         public bool Running;
         public string InputRole, InputFormat, InputDevice;
         public string InputRequested, InputAccepted, InputMix;
@@ -462,7 +464,7 @@ namespace MirrorAudio
 
             return new StatusSnapshot
             {
-                Running = _running,
+                InputExclusive = _inExclusive, Running = _running,
                 InputRole = _inRoleStr, InputFormat = _inFmtStr, InputDevice = _inDevName,
                 InputRequested = _inReqStr, InputAccepted = _inAccStr, InputMix = _inMixStr,
 
@@ -654,9 +656,7 @@ namespace MirrorAudio
             return null;
         }
     }
-    [DataMember] public bool InputExclusive = false;
 
-        public bool InputExclusive;
 
 }
 
@@ -667,5 +667,4 @@ namespace MirrorAudio
         accepted = null;
         try { return null; } catch { return null; }
     }
-
 
