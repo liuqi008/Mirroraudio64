@@ -654,4 +654,18 @@ namespace MirrorAudio
             return null;
         }
     }
+    [DataMember] public bool InputExclusive = false;
+
+        public bool InputExclusive;
+
 }
+
+
+    // === Exclusive capture stub ===
+    IWaveIn TryCreateExclusiveCapture(MMDevice dev, WaveFormat req, out WaveFormat accepted)
+    {
+        accepted = null;
+        try { return null; } catch { return null; }
+    }
+
+
