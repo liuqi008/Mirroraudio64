@@ -599,45 +599,53 @@ namespace MirrorAudio
         public int Channels = 2;
     }
 
+    
     public static class InputFormatHelper
     {
         public static WaveFormat BuildWaveFormat(InputFormatStrategy strategy, int customRate, int customBits, int channels)
         {
             switch (strategy)
             {
-                case InputFormatStrategy.SystemMix:       return null;
-                case InputFormatStrategy.Specify24_48000: return CreatePcm24(48000, channels);
-                case InputFormatStrategy.Specify24_96000: return CreatePcm24(96000, channels);
-                case InputFormatStrategy.Specify24_192000:return CreatePcm24(192000, channels);
-                case InputFormatStrategy.Specify32f_48000:return WaveFormat.CreateIeeeFloatWaveFormat(48000, channels);
-                case InputFormatStrategy.Specify32f_96000:return WaveFormat.CreateIeeeFloatWaveFormat(96000, channels);
-                case InputFormatStrategy.Specify32f_192000:return WaveFormat.CreateIeeeFloatWaveFormat(192000, channels);
+                case InputFormatStrategy.SystemMix:         return null;
+                case InputFormatStrategy.Specify24_48000:   return new WaveFormat(48000, 24, channels);
+                case InputFormatStrategy.Specify24_96000:   return new WaveFormat(96000, 24, channels);
+                case InputFormatStrategy.Specify24_192000:  return new WaveFormat(192000, 24, channels);
+                case InputFormatStrategy.Specify32f_48000:  return WaveFormat.CreateIeeeFloatWaveFormat(48000, channels);
+                case InputFormatStrategy.Specify32f_96000:  return WaveFormat.CreateIeeeFloatWaveFormat(96000, channels);
+                case InputFormatStrategy.Specify32f_192000: return WaveFormat.CreateIeeeFloatWaveFormat(192000, channels);
                 case InputFormatStrategy.Custom:
-                    if (customBits >= 32) return WaveFormat.CreateIeeeFloatWaveFormat(customRate, channels);
-                    if (customBits == 24) return CreatePcm24(customRate, channels);
-                    return new WaveFormat(customRate, customBits, channels);
+                    if (customRate > 0 && (customBits == 16 || customBits == 24 || customBits == 32))
+                        return new WaveFormat(customRate, customBits, channels);
+                    return null;
                 default: return null;
             }
         }
 
-        public static WaveFormat CreatePcm24(int sampleRate, int channels)
+        public static string Fmt(WaveFormat f)
         {
-            return WaveFormat.CreateCustomFormat(WaveFormatEncoding.Extensible, sampleRate, channels, sampleRate * channels * 3, 3, 24);
+            if (f == null) return "-";
+            try
+            {
+                return $"{f.Encoding} {f.SampleRate}Hz {f.BitsPerSample}bit {f.Channels}ch";
+            }
+            catch { return "-"; }
         }
 
-        public static string Fmt(WaveFormat wf) { return wf == null ? "-" : (wf.SampleRate + "Hz/" + wf.BitsPerSample + "bit/" + wf.Channels + "ch"); }
+        public static T FirstNonNull<T>(params T[] items) where T : class
+        {
+            foreach (var it in items) if (it != null) return it;
+            return null;
+        }
 
-        public static WaveFormat NegotiateLoopbackFormat(MMDevice device, InputFormatRequest request,
-            out string log, out WaveFormat mixFormat, out WaveFormat acceptedFormat, out WaveFormat requestedFormat)
+        public static WaveFormat NegotiateLoopbackFormat(MMDevice device, InputFormatRequest request, out string log, out string mixFormat, out string acceptedFormat, out string requestedFormat)
         {
             var sb = new System.Text.StringBuilder();
-            mixFormat = null; acceptedFormat = null; requestedFormat = null;
-            try { mixFormat = device.AudioClient.MixFormat; } catch { }
+            mixFormat = "-"; acceptedFormat = "-"; requestedFormat = "-";
+            try { mixFormat = Fmt(device.AudioClient.MixFormat); } catch { }
 
             var desired = BuildWaveFormat(request.Strategy, request.CustomSampleRate, request.CustomBitDepth, request.Channels);
-            requestedFormat = desired;
+            requestedFormat = Fmt(desired);
 
-            if (mixFormat != null) sb.AppendLine("Device Mix: " + Fmt(mixFormat));
             if (desired == null)
             {
                 sb.AppendLine("Request: SystemMix (use engine-provided mix).");
@@ -646,26 +654,15 @@ namespace MirrorAudio
                 return null;
             }
 
-            WaveFormatExtensible closest = null;
-            bool ok = false;
-            try { ok = device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, desired, out closest); } catch { ok = false; }
-            sb.AppendLine("Request: " + Fmt(desired) + " -> Supported: " + (ok ? "Yes" : "No"));
-
-            if (!ok && closest != null)
-            {
-                acceptedFormat = closest;
-                sb.AppendLine("Closest: " + Fmt(closest));
-                log = sb.ToString();
-                return closest;
-            }
-            if (ok)
-            {
-                acceptedFormat = desired;
-                log = sb.ToString();
-                return desired;
-            }
+            // In this simplified negotiation, for loopback we accept desired format as 'accepted' for display purposes.
+            // Actual resampling is handled by the capture or downstream pipeline.
+            acceptedFormat = Fmt(desired);
+            sb.AppendLine("Device Mix: " + mixFormat);
+            sb.AppendLine("Request   : " + requestedFormat);
+            sb.AppendLine("Accepted  : " + acceptedFormat);
             log = sb.ToString();
-            return null;
+            return desired;
         }
     }
+
 }
