@@ -237,18 +237,15 @@ namespace MirrorAudio
             btnReload.Click += (s,e) => LoadDevices();
         }
 
-        void LoadConfig(AppSettings cur){
-            try { chkAutoStart.Checked = cur.AutoStart; } catch {}
-            try { chkLogging.Checked = cur.EnableLogging; } catch {}
+        void LoadConfig(AppSettings cur)
+        {
             Result = new AppSettings
             {
-                                AutoStart = (chkAutoStart != null && chkAutoStart.Checked),
-                EnableLogging = (chkLogging != null && chkLogging.Checked),
-InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
+                InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
                 MainShare = cur.MainShare, MainSync = cur.MainSync, MainRate = cur.MainRate, MainBits = cur.MainBits, MainBufMs = cur.MainBufMs,
                 AuxShare = cur.AuxShare, AuxSync = cur.AuxSync, AuxRate = cur.AuxRate, AuxBits = cur.AuxBits, AuxBufMs = cur.AuxBufMs,
                 MainBufMode = cur.MainBufMode, AuxBufMode = cur.AuxBufMode,
-                AutoStart = cur.AutoStart, EnableLogging = cur.EnableLogging,
+                
                 InputFormatStrategy = cur.InputFormatStrategy,
                 InputCustomSampleRate = cur.InputCustomSampleRate,
                 InputCustomBitDepth = cur.InputCustomBitDepth,
