@@ -7,6 +7,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using NAudio.MediaFoundation;
@@ -57,6 +58,7 @@ namespace MirrorAudio
     [DataContract]
     public sealed class AppSettings
     {
+        [DataMember] public bool InputExclusive = false;
         [DataMember] public string InputDeviceId, MainDeviceId, AuxDeviceId;
         [DataMember] public ShareModeOption MainShare = ShareModeOption.Auto, AuxShare = ShareModeOption.Shared;
         [DataMember] public SyncModeOption MainSync = SyncModeOption.Auto, AuxSync = SyncModeOption.Auto;
@@ -78,6 +80,7 @@ namespace MirrorAudio
 
     public sealed class StatusSnapshot
     {
+        public bool InputExclusive;
         public bool Running;
         public string InputRole, InputFormat, InputDevice;
         public string InputRequested, InputAccepted, InputMix;
@@ -124,6 +127,8 @@ namespace MirrorAudio
 
     sealed class TrayApp : IDisposable, IMMNotificationClient
     {
+        void ApplySideEffects() { StartupHelper.SetAutoStart(_cfg.AutoStart); Logger.Init(_cfg.EnableLogging); }
+        bool _inExclusive = false;
         readonly NotifyIcon _tray = new NotifyIcon();
         readonly ContextMenuStrip _menu = new ContextMenuStrip();
 
@@ -157,7 +162,7 @@ namespace MirrorAudio
             var miSet = new ToolStripMenuItem("设置(&G)...", null, (s, e) => OnSettings());
             var miExit = new ToolStripMenuItem("退出(&X)", null, (s, e) => { Stop(); Application.Exit(); });
             _menu.Items.AddRange(new ToolStripItem[] { miStart, miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
-            _tray.ContextMenuStrip = _menu;
+            _tray.ContextMenuStrip = _menu; ApplySideEffects(); Logger.Log("TrayApp constructed.");
 
             StartOrRestart();
         }
@@ -213,10 +218,24 @@ namespace MirrorAudio
                     CustomBitDepth = _cfg.InputCustomBitDepth,
                     Channels = 2
                 };
-                var cap = new WasapiCapture(_inDev);
+                                IWaveIn cap = null;
                 var acc = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
-                if (acc != null) cap.WaveFormat = acc;
+                _inExclusive = _cfg.InputExclusive;
+                WaveFormat inputAccepted = null;
+                if (_inExclusive)
+                {
+                    cap = TryCreateExclusiveCapture(_inDev, acc, out inputAccepted);
+                    if (cap == null) _inExclusive = false;
+                }
+                if (cap == null)
+                {
+                    var shared = new WasapiCapture(_inDev);
+                    if (acc != null) shared.WaveFormat = acc;
+                    inputAccepted = shared.WaveFormat;
+                    cap = shared;
+                }
                 _capture = cap; inFmt = cap.WaveFormat;
+
                 _inReqStr = InputFormatHelper.Fmt(acc);
                 _inAccStr = InputFormatHelper.Fmt(inFmt);
                 _inMixStr = InputFormatHelper.Fmt(inputMix);
@@ -462,6 +481,7 @@ namespace MirrorAudio
 
             return new StatusSnapshot
             {
+                InputExclusive = _inExclusive,
                 Running = _running,
                 InputRole = _inRoleStr, InputFormat = _inFmtStr, InputDevice = _inDevName,
                 InputRequested = _inReqStr, InputAccepted = _inAccStr, InputMix = _inMixStr,
@@ -575,7 +595,23 @@ namespace MirrorAudio
             }
             catch { return null; }
         }
-    }
+    
+        // Try to create exclusive capture; return null to fallback
+        IWaveIn TryCreateExclusiveCapture(MMDevice dev, WaveFormat req, out WaveFormat accepted)
+        {
+            accepted = null;
+            try
+            {
+                var cap = new ExclusiveWasapiCapture(dev, req);
+                accepted = cap.WaveFormat;
+                return cap;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+}
 
     public sealed class InputFormatRequest
     {
@@ -652,6 +688,161 @@ namespace MirrorAudio
             }
             log = sb.ToString();
             return null;
+        }
+    }
+
+    // Minimal exclusive-mode capture using NAudio CoreAudio
+    class ExclusiveWasapiCapture : IWaveIn
+    {
+        public event EventHandler<WaveInEventArgs> DataAvailable;
+        public event EventHandler<StoppedEventArgs> RecordingStopped;
+
+        readonly MMDevice _device;
+        readonly WaveFormat _request;
+        WaveFormat _format;
+        AudioClient _client;
+        AudioCaptureClient _capture;
+        IntPtr _eventHandle = IntPtr.Zero;
+        Thread _thread;
+        volatile bool _stop;
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr CreateEvent(IntPtr lpEventAttributes, bool bManualReset, bool bInitialState, string lpName);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        static extern bool SetEvent(IntPtr hEvent);
+        const uint INFINITE = 0xFFFFFFFF;
+
+        public ExclusiveWasapiCapture(MMDevice device, WaveFormat requestFormat = null)
+        {
+            _device = device ?? throw new ArgumentNullException(nameof(device));
+            _request = requestFormat ?? new WaveFormat(192000, 16, 2);
+            Initialize();
+        }
+
+        void Initialize()
+        {
+            _client = _device.AudioClient;
+            long defPer, minPer;
+            _client.GetDevicePeriod(out defPer, out minPer);
+
+            var fmt = _request;
+            if (!_client.IsFormatSupported(AudioClientShareMode.Exclusive, fmt))
+            {
+                var trials = new List<WaveFormat>{
+                    new WaveFormat(192000, 24, 2),
+                    WaveFormat.CreateIeeeFloatWaveFormat(192000, 2),
+                    new WaveFormat(96000, 16, 2),
+                    new WaveFormat(48000, 16, 2)
+                };
+                foreach (var f in trials) { if (_client.IsFormatSupported(AudioClientShareMode.Exclusive, f)) { fmt = f; break; } }
+            }
+            _format = fmt;
+            _client.Initialize(AudioClientShareMode.Exclusive, AudioClientStreamFlags.EventCallback, minPer, minPer, _format, Guid.Empty);
+            _client.GetBufferSize(out _);
+            _capture = _client.AudioCaptureClient;
+            _eventHandle = CreateEvent(IntPtr.Zero, false, false, null);
+            _client.SetEventHandle(_eventHandle);
+        }
+
+        public WaveFormat WaveFormat { get => _format; set => throw new NotSupportedException(); }
+
+        public void StartRecording()
+        {
+            if (_thread != null) return;
+            _stop = false;
+            _client.Start();
+            _thread = new Thread(CaptureThread) { IsBackground = true, Priority = ThreadPriority.Highest };
+            _thread.Start();
+        }
+
+        void CaptureThread()
+        {
+            try
+            {
+                while (!_stop)
+                {
+                    WaitForSingleObject(_eventHandle, INFINITE);
+                    if (_stop) break;
+                    int next;
+                    _capture.GetNextPacketSize(out next);
+                    while (next > 0)
+                    {
+                        IntPtr ptr;
+                        int frames;
+                        AudioClientBufferFlags flags;
+                        long devpos, qpc;
+                        ptr = _capture.GetBuffer(out frames, out flags, out devpos, out qpc);
+                        int bytes = frames * _format.BlockAlign;
+                        if (bytes > 0)
+                        {
+                            byte[] buf = new byte[bytes];
+                            System.Runtime.InteropServices.Marshal.Copy(ptr, buf, 0, bytes);
+                            DataAvailable?.Invoke(this, new WaveInEventArgs(buf, bytes));
+                        }
+                        _capture.ReleaseBuffer(frames);
+                        _capture.GetNextPacketSize(out next);
+                    }
+                }
+            }
+            catch (Exception ex) { RecordingStopped?.Invoke(this, new StoppedEventArgs(ex)); }
+            finally { try { _client.Stop(); } catch { } }
+        }
+
+        public void StopRecording()
+        {
+            _stop = true;
+            try { SetEvent(_eventHandle); } catch { }
+            try { _thread?.Join(500); } catch { }
+            _thread = null;
+        }
+
+        public void Dispose()
+        {
+            StopRecording();
+        }
+    }
+
+    static class Logger
+    {
+        static bool _enabled; 
+        static readonly object _lock = new object();
+        static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MirrorAudio", "logs");
+        static string FilePath => Path.Combine(Dir, DateTime.Now.ToString("yyyyMMdd") + ".log");
+        public static void Init(bool enabled)
+        {
+            _enabled = enabled;
+            if (_enabled && !Directory.Exists(Dir)) { try { Directory.CreateDirectory(Dir); } catch {} }
+        }
+        public static void Log(string msg)
+        {
+            if (!_enabled) return;
+            try { lock(_lock) System.IO.File.AppendAllText(FilePath, DateTime.Now.ToString("HH:mm:ss.fff ") + msg + Environment.NewLine); } catch {}
+        }
+    }
+    static class StartupHelper
+    {
+        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        const string AppName = "MirrorAudio";
+        public static void SetAutoStart(bool enable)
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(RunKey, true) ?? Registry.CurrentUser.CreateSubKey(RunKey, true))
+                {
+                    if (enable)
+                    {
+                        var exe = Application.ExecutablePath;
+                        key.SetValue(AppName, $"\"{exe}\"");
+                    }
+                    else if (key.GetValue(AppName) != null)
+                    {
+                        key.DeleteValue(AppName, false);
+                    }
+                }
+            }
+            catch {}
         }
     }
 }
