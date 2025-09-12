@@ -245,22 +245,8 @@ AddRow(tDev, "通道1 输入设备", pIn);
 
         void LoadConfig(AppSettings cur)
         {
-            chkInputExclusive.Checked = cur.InputExclusive;Result = new AppSettings
-            {
-                InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
-                MainShare = cur.MainShare, MainSync = cur.MainSync, MainRate = cur.MainRate, MainBits = cur.MainBits, MainBufMs = cur.MainBufMs,
-                AuxShare = cur.AuxShare, AuxSync = cur.AuxSync, AuxRate = cur.AuxRate, AuxBits = cur.AuxBits, AuxBufMs = cur.AuxBufMs,
-                MainBufMode = cur.MainBufMode, AuxBufMode = cur.AuxBufMode,
-                AutoStart = cur.AutoStart, EnableLogging = cur.EnableLogging,
-                InputFormatStrategy = cur.InputFormatStrategy,
-                InputCustomSampleRate = cur.InputCustomSampleRate,
-                InputCustomBitDepth = cur.InputCustomBitDepth,
-                MainResamplerQuality = cur.MainResamplerQuality,
-                AuxResamplerQuality = cur.AuxResamplerQuality,
-                MainForceInternalResamplerInShared = cur.MainForceInternalResamplerInShared,
-                AuxForceInternalResamplerInShared = cur.AuxForceInternalResamplerInShared
-            };
-            SelectById(cmbInput, cur.InputDeviceId);
+                                    chkInputExclusive.Checked = cur.InputExclusive;
+SelectById(cmbInput, cur.InputDeviceId);
             SelectById(cmbMain,  cur.MainDeviceId);
             SelectById(cmbAux,   cur.AuxDeviceId);
 
@@ -292,7 +278,7 @@ AddRow(tDev, "通道1 输入设备", pIn);
         {
             StatusSnapshot s; try { s = _statusProvider(); } catch { s = new StatusSnapshot(); }
             lblRun.Text = s.Running ? "运行中" : "停止";
-            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | 实得: " + (s.InputFormat ?? "-"); + " | 独占=" + (s.InputExclusive ? "是" : "否")
+            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | 实得: " + (s.InputFormat ?? "-") + " | 独占=" + (s.InputExclusive ? "是" : "否");
             lblInputReq.Text = "请求: " + (s.InputRequested ?? "-") + "  |  接受: " + (s.InputAccepted ?? "-") + "  |  混音: " + (s.InputMix ?? "-");
 
             lblMain.Text = (s.MainDevice ?? "-") + " | " + (s.MainMode ?? "-") + " | " + (s.MainSync ?? "-");
@@ -352,6 +338,7 @@ AddRow(tDev, "通道1 输入设备", pIn);
 
             Result = new AppSettings
             {
+                InputExclusive = chkInputExclusive.Checked,
                 InputDeviceId = inSel != null ? inSel.Id : null,
                 MainDeviceId  = mainSel.Id,
                 AuxDeviceId   = auxSel.Id,
