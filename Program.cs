@@ -577,7 +577,14 @@ namespace MirrorAudio
             }
             catch { return null; }
         }
-    }
+    
+        // === Exclusive capture stub ===
+        IWaveIn TryCreateExclusiveCapture(MMDevice dev, WaveFormat req, out WaveFormat accepted)
+        {
+            accepted = null;
+            try { return null; } catch { return null; }
+        }
+}
 
     public sealed class InputFormatRequest
     {
@@ -659,12 +666,5 @@ namespace MirrorAudio
 
 
 }
-
-
-    // === Exclusive capture stub ===
-    IWaveIn TryCreateExclusiveCapture(MMDevice dev, WaveFormat req, out WaveFormat accepted)
-    {
-        accepted = null;
-        try { return null; } catch { return null; }
     }
 
