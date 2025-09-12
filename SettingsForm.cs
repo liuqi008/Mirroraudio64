@@ -8,7 +8,6 @@ namespace MirrorAudio
 {
     sealed class SettingsForm : Form
     {
-    readonly CheckBox chkInputExclusive = new CheckBox();
         readonly Label lblRun=new Label(),
                        lblInput=new Label(),
                        lblInputReq=new Label(),
@@ -104,11 +103,7 @@ namespace MirrorAudio
             cmbMain.DropDownStyle  = ComboBoxStyle.DropDownList;
             cmbAux.DropDownStyle   = ComboBoxStyle.DropDownList;
 
-            var pIn = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
-chkInputExclusive.Text = "独占（仅录音）";
-pIn.Controls.Add(cmbInput);
-pIn.Controls.Add(chkInputExclusive);
-AddRow(tDev, "通道1 输入设备", pIn);
+            AddRow(tDev, "通道1 输入设备",  cmbInput);
             AddRow(tDev, "通道2 主输出设备", cmbMain);
             AddRow(tDev, "通道3 副输出设备", cmbAux);
 
@@ -244,15 +239,15 @@ AddRow(tDev, "通道1 输入设备", pIn);
 
         void LoadConfig(AppSettings cur)
         {
-                        chkInputExclusive.Checked = cur.InputExclusive;
-Result = new AppSettings
+            chkInputExclusive.Checked = cur.InputExclusive;
+            Result = new AppSettings
             {
-                                InputExclusive = chkInputExclusive.Checked,
-InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
+                InputExclusive = chkInputExclusive.Checked,
+                InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
                 MainShare = cur.MainShare, MainSync = cur.MainSync, MainRate = cur.MainRate, MainBits = cur.MainBits, MainBufMs = cur.MainBufMs,
                 AuxShare = cur.AuxShare, AuxSync = cur.AuxSync, AuxRate = cur.AuxRate, AuxBits = cur.AuxBits, AuxBufMs = cur.AuxBufMs,
                 MainBufMode = cur.MainBufMode, AuxBufMode = cur.AuxBufMode,
-                
+                AutoStart = cur.AutoStart, EnableLogging = cur.EnableLogging,
                 InputFormatStrategy = cur.InputFormatStrategy,
                 InputCustomSampleRate = cur.InputCustomSampleRate,
                 InputCustomBitDepth = cur.InputCustomBitDepth,
@@ -293,7 +288,7 @@ InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId 
         {
             StatusSnapshot s; try { s = _statusProvider(); } catch { s = new StatusSnapshot(); }
             lblRun.Text = s.Running ? "运行中" : "停止";
-            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | 实得: " + (s.InputFormat ?? "-") + " | 独占=" + (s.InputExclusive ? "是" : "否");
+            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | 实得: " + (s.InputFormat ?? "-"); + " | 独占=" + (s.InputExclusive ? "是" : "否")
             lblInputReq.Text = "请求: " + (s.InputRequested ?? "-") + "  |  接受: " + (s.InputAccepted ?? "-") + "  |  混音: " + (s.InputMix ?? "-");
 
             lblMain.Text = (s.MainDevice ?? "-") + " | " + (s.MainMode ?? "-") + " | " + (s.MainSync ?? "-");
@@ -457,13 +452,5 @@ InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId 
             cmbResampAux.Enabled = internalActive;
             chkAuxForceInShared.Enabled = internalActive || resamplingActive;
         }
-    void UpdateInputExclusiveEnabled()
-    {
-        var it = cmbInput.SelectedItem as DevItem;
-        bool isRecording = it != null && (it.Name.StartsWith("录音:") || it.Name.Contains("录音"));
-        chkInputExclusive.Enabled = isRecording;
-        if (!isRecording) chkInputExclusive.Checked = false;
-    }
-
     }
 }
