@@ -724,8 +724,8 @@ namespace MirrorAudio
         void Initialize()
         {
             _client = _device.AudioClient;
-            long defPer, minPer;
-            _client.DefaultDevicePeriod; var minPer = _client.MinimumDevicePeriod; var defPer = _client.DefaultDevicePeriod;
+            // periods declared below
+            var minPer = _client.MinimumDevicePeriod; var defPer = _client.DefaultDevicePeriod;
 
             var fmt = _request;
             if (!_client.IsFormatSupported(AudioClientShareMode.Exclusive, fmt))
