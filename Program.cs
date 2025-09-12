@@ -88,7 +88,8 @@ namespace MirrorAudio
         public double MainDefaultPeriodMs, MainMinimumPeriodMs, AuxDefaultPeriodMs, AuxMinimumPeriodMs;
         public double MainAlignedMultiple, AuxAlignedMultiple;
 
-        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResampling;
+        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResampl;
+        public bool VirtualCableActiveing;
         public bool MainInternalResampler, AuxInternalResampler;
         public int MainInternalResamplerQuality, AuxInternalResamplerQuality;
         public bool MainMultiSRC, AuxMultiSRC;
@@ -131,6 +132,7 @@ namespace MirrorAudio
         MMDeviceEnumerator _mm = new MMDeviceEnumerator();
 
         MMDevice _inDev, _outMain, _outAux;
+        bool _virtCapActive = false;
         IWaveIn _capture; BufferedWaveProvider _bufMain, _bufAux;
         IWaveProvider _srcMain, _srcAux; WasapiOut _mainOut, _auxOut;
         MediaFoundationResampler _resMain, _resAux;
@@ -191,7 +193,21 @@ namespace MirrorAudio
                                   _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia));
             _outMain = FindById(_cfg.MainDeviceId, DataFlow.Render);
             _outAux = FindById(_cfg.AuxDeviceId, DataFlow.Render);
+            
+            // -- Virtual Cable Low-Latency path (auto-prefer capture endpoint like 'CABLE Output') --
+            _virtCapActive = false;
+            try
+            {
+                var vc = FindCaptureByNameContains("CABLE Output", "VB-Audio", "Virtual Cable");
+                if (vc != null)
+                {
+                    _inDev = vc; _virtCapActive = true;
+                }
+            }
+            catch { }
+            /*VCABLE_INJECT*/
             _inDevName = _inDev != null ? _inDev.FriendlyName : "-";
+    
 
             if (_outMain == null || _outAux == null)
             {
@@ -485,6 +501,7 @@ namespace MirrorAudio
                 AuxDefaultPeriodMs  = _defAuxMs,  AuxMinimumPeriodMs  = _minAuxMs,
 
                 MainAlignedMultiple = mainMul, AuxAlignedMultiple = auxMul,
+                , VirtualCableActive = _virtCapActive
 
                 MainNoSRC = _mainNoSRC, AuxNoSRC = _auxNoSRC,
                 MainResampling = _mainResampling, AuxResampling = _auxResampling,
@@ -526,6 +543,25 @@ namespace MirrorAudio
             catch { }
             _periodCache[id] = Tuple.Create(defMs, minMs);
         }
+        MMDevice FindCaptureByNameContains(params string[] keys)
+        {
+            try
+            {
+                var col = _mm.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+                foreach (var d in col)
+                {
+                    var name = (d != null ? d.FriendlyName ?? string.Empty : string.Empty);
+                    foreach (var k in keys)
+                    {
+                        if (!string.IsNullOrEmpty(k) && name.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0)
+                            return d;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
 
         static bool SupportsExclusive(MMDevice d, WaveFormat f) { try { return d.AudioClient.IsFormatSupported(AudioClientShareMode.Exclusive, f); } catch { return false; } }
 
@@ -539,7 +575,7 @@ namespace MirrorAudio
                 // 独占：至少 3× 步长
                 if (mode == BufferAlignMode.MinAlign) ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
                 else                                   ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
-                double floor = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef) * 3.0;
+                double floor = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef) * (_virtCapActive ? 2.0 : 3.0);
                 if (ms < floor)
                 {
                     double step = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef);
