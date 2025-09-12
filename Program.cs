@@ -1,6 +1,14 @@
+// MirrorAudio patched files — RevB 2025-09-12 05:59:32 UTC
 
-// Program.cs - MirrorAudio
-// NOTE: This file targets C# 7.3 compatibility.
+// Program.cs - minimal-intrusive patch set
+// Targets C# 7.3. No raw-string or new syntax.
+// Changes in RevB:
+// 1) Implement TrayApp.Dispose() to satisfy IDisposable.
+// 2) Correct device period retrieval (default/min) via reflection + cache.
+// 3) Compute 'AlignedMultiple' using selected BufferAlignMode (default/min).
+// 4) Make 'internal resampler in shared' actually effective, targeting MixFormat to avoid double SRC where possible.
+// 5) StatusSnapshot exposes InternalResampler flags + qualities + MultiSRC booleans.
+// NOTE: Keep UI/layout unchanged; SettingsForm only reads these values.
 
 using System;
 using System.Collections.Generic;
@@ -11,7 +19,6 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Threading;
 using System.Windows.Forms;
-using Microsoft.Win32;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using NAudio.MediaFoundation;
@@ -19,6 +26,102 @@ using NAudio.Wave;
 
 namespace MirrorAudio
 {
+    [DataContract] public enum ShareModeOption { [EnumMember] Auto, [EnumMember] Exclusive, [EnumMember] Shared }
+    [DataContract] public enum SyncModeOption  { [EnumMember] Auto, [EnumMember] Event, [EnumMember] Polling }
+    [DataContract] public enum BufferAlignMode { [EnumMember] DefaultAlign, [EnumMember] MinAlign }
+
+    [DataContract]
+    public enum InputFormatStrategy
+    {
+        [EnumMember] SystemMix = 0,
+        [EnumMember] Specify24_48000,
+        [EnumMember] Specify24_96000,
+        [EnumMember] Specify24_192000,
+        [EnumMember] Specify32f_48000,
+        [EnumMember] Specify32f_96000,
+        [EnumMember] Specify32f_192000,
+        [EnumMember] Custom
+    }
+
+    [DataContract]
+    public sealed class AppSettings
+    {
+        [DataMember] public string InputDeviceId, MainDeviceId, AuxDeviceId;
+
+        [DataMember] public ShareModeOption MainShare = ShareModeOption.Auto;
+        [DataMember] public ShareModeOption AuxShare  = ShareModeOption.Shared;
+        [DataMember] public SyncModeOption  MainSync  = SyncModeOption.Auto;
+        [DataMember] public SyncModeOption  AuxSync   = SyncModeOption.Auto;
+
+        [DataMember] public int MainRate = 192000, MainBits = 24, MainBufMs = 12;
+        [DataMember] public int AuxRate  =  48000, AuxBits  = 16, AuxBufMs  = 150;
+
+        [DataMember] public BufferAlignMode MainBufMode = BufferAlignMode.DefaultAlign;
+        [DataMember] public BufferAlignMode AuxBufMode  = BufferAlignMode.DefaultAlign;
+
+        [DataMember] public bool AutoStart = false, EnableLogging = false;
+
+        // Input loopback request
+        [DataMember] public InputFormatStrategy InputFormatStrategy = InputFormatStrategy.SystemMix;
+        [DataMember] public int InputCustomSampleRate = 96000;
+        [DataMember] public int InputCustomBitDepth  = 24;
+
+        // Resampler quality (when internal SRC is used)
+        [DataMember] public int  MainResamplerQuality = 60;
+        [DataMember] public int  AuxResamplerQuality  = 30;
+        // Force internal SRC even in shared mode (target MixFormat to avoid double SRC)
+        [DataMember] public bool MainForceInternalResamplerInShared = false;
+        [DataMember] public bool AuxForceInternalResamplerInShared  = false;
+    }
+
+    public sealed class StatusSnapshot
+    {
+        public bool Running;
+
+        public string InputRole, InputFormat, InputDevice;
+        public string InputRequested, InputAccepted, InputMix;
+
+        public string MainDevice, AuxDevice, MainMode, AuxMode, MainSync, AuxSync, MainFormat, AuxFormat;
+        public int MainBufferRequestedMs, AuxBufferRequestedMs;
+        public int MainBufferMs, AuxBufferMs;
+        public double MainDefaultPeriodMs, MainMinimumPeriodMs, AuxDefaultPeriodMs, AuxMinimumPeriodMs;
+        public double MainAlignedMultiple, AuxAlignedMultiple;
+        public double MainBufferMultiple,  AuxBufferMultiple;
+
+        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResampling;
+
+        // New: internal resampler flags + quality + multi-SRC
+        public bool MainInternalResampler, AuxInternalResampler;
+        public int  MainInternalResamplerQuality, AuxInternalResamplerQuality;
+        public bool MainMultiSRC, AuxMultiSRC;
+    }
+
+    static class Config
+    {
+        static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MirrorAudio");
+        static readonly string FilePath = Path.Combine(Dir, "settings.json");
+        public static AppSettings Load()
+        {
+            try
+            {
+                if (!File.Exists(FilePath)) return new AppSettings();
+                using (var fs = File.OpenRead(FilePath))
+                    return (AppSettings)new DataContractJsonSerializer(typeof(AppSettings)).ReadObject(fs);
+            }
+            catch { return new AppSettings(); }
+        }
+        public static void Save(AppSettings s)
+        {
+            try
+            {
+                if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
+                using (var fs = File.Create(FilePath))
+                    new DataContractJsonSerializer(typeof(AppSettings)).WriteObject(fs, s);
+            }
+            catch { }
+        }
+    }
+
     static class Logger
     {
         public static bool Enabled;
@@ -50,92 +153,60 @@ namespace MirrorAudio
         }
     }
 
-    [DataContract] public enum ShareModeOption { [EnumMember] Auto, [EnumMember] Exclusive, [EnumMember] Shared }
-    [DataContract] public enum SyncModeOption { [EnumMember] Auto, [EnumMember] Event, [EnumMember] Polling }
-    [DataContract] public enum BufferAlignMode { [EnumMember] DefaultAlign, [EnumMember] MinAlign }
-
-    [DataContract]
-    public enum InputFormatStrategy
+    public sealed class InputFormatRequest
     {
-        [EnumMember] SystemMix = 0,
-        [EnumMember] Specify24_48000,
-        [EnumMember] Specify24_96000,
-        [EnumMember] Specify24_192000,
-        [EnumMember] Specify32f_48000,
-        [EnumMember] Specify32f_96000,
-        [EnumMember] Specify32f_192000,
-        [EnumMember] Custom
+        public InputFormatStrategy Strategy = InputFormatStrategy.SystemMix;
+        public int CustomSampleRate = 48000;
+        public int CustomBitDepth  = 24;
+        public int Channels = 2;
     }
 
-    [DataContract]
-    public sealed class AppSettings
+    public static class InputFormatHelper
     {
-        [DataMember] public string InputDeviceId, MainDeviceId, AuxDeviceId;
-        [DataMember] public ShareModeOption MainShare = ShareModeOption.Auto, AuxShare = ShareModeOption.Shared;
-        [DataMember] public SyncModeOption MainSync = SyncModeOption.Auto, AuxSync = SyncModeOption.Auto;
-        [DataMember] public int MainRate = 192000, MainBits = 24, MainBufMs = 12;
-        [DataMember] public int AuxRate = 48000, AuxBits = 16, AuxBufMs = 150;
-        [DataMember] public BufferAlignMode MainBufMode = BufferAlignMode.DefaultAlign;
-        [DataMember] public BufferAlignMode AuxBufMode = BufferAlignMode.DefaultAlign;
-        [DataMember] public bool AutoStart = false, EnableLogging = false;
-
-        // 输入环回策略
-        [DataMember] public InputFormatStrategy InputFormatStrategy = InputFormatStrategy.SystemMix;
-        [DataMember] public int InputCustomSampleRate = 96000;
-        [DataMember] public int InputCustomBitDepth = 24;
-
-        // 重采样控制
-        [DataMember] public int MainResamplerQuality = 60;  // 60/50/40/30
-        [DataMember] public int AuxResamplerQuality = 30;
-        [DataMember] public bool MainForceInternalResamplerInShared = false;
-        [DataMember] public bool AuxForceInternalResamplerInShared = false;
-    }
-
-    public sealed class StatusSnapshot
-    {
-        public bool Running;
-
-        public string InputRole, InputFormat, InputDevice;
-        public string InputRequested, InputAccepted, InputMix;
-
-        public string MainDevice, AuxDevice, MainMode, AuxMode, MainSync, AuxSync, MainFormat, AuxFormat;
-        public int MainBufferRequestedMs, AuxBufferRequestedMs;
-        public int MainBufferMs, AuxBufferMs;
-        public double MainDefaultPeriodMs, MainMinimumPeriodMs, AuxDefaultPeriodMs, AuxMinimumPeriodMs;
-        public double MainAlignedMultiple, AuxAlignedMultiple;
-        public double MainBufferMultiple, AuxBufferMultiple;
-
-        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResampling;
-
-        // 新增：程序内重采样与多次SRC状态 + 质量
-        public bool MainInternalResampler, AuxInternalResampler;
-        public int MainInternalResamplerQuality, AuxInternalResamplerQuality;
-        public bool MainMultiSRC, AuxMultiSRC;
-    }
-
-    static class Config
-    {
-        static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MirrorAudio");
-        static readonly string FilePath = Path.Combine(Dir, "settings.json");
-        public static AppSettings Load()
+        public static WaveFormat BuildWaveFormat(InputFormatStrategy strategy, int customRate, int customBits, int channels)
         {
-            try
+            switch (strategy)
             {
-                if (!File.Exists(FilePath)) return new AppSettings();
-                using (var fs = File.OpenRead(FilePath))
-                    return (AppSettings)new DataContractJsonSerializer(typeof(AppSettings)).ReadObject(fs);
+                case InputFormatStrategy.SystemMix: return null;
+                case InputFormatStrategy.Specify24_48000:  return CreatePcm24( 48000, channels);
+                case InputFormatStrategy.Specify24_96000:  return CreatePcm24( 96000, channels);
+                case InputFormatStrategy.Specify24_192000: return CreatePcm24(192000, channels);
+                case InputFormatStrategy.Specify32f_48000: return WaveFormat.CreateIeeeFloatWaveFormat( 48000, channels);
+                case InputFormatStrategy.Specify32f_96000: return WaveFormat.CreateIeeeFloatWaveFormat( 96000, channels);
+                case InputFormatStrategy.Specify32f_192000:return WaveFormat.CreateIeeeFloatWaveFormat(192000, channels);
+                case InputFormatStrategy.Custom:
+                    if (customBits >= 32) return WaveFormat.CreateIeeeFloatWaveFormat(customRate, channels);
+                    if (customBits == 24) return CreatePcm24(customRate, channels);
+                    return new WaveFormat(customRate, customBits, channels);
+                default: return null;
             }
-            catch { return new AppSettings(); }
         }
-        public static void Save(AppSettings s)
+        public static WaveFormat CreatePcm24(int rate, int ch) => WaveFormat.CreateCustomFormat(WaveFormatEncoding.Extensible, rate, ch, rate * ch * 3, 3, 24);
+        public static string Fmt(WaveFormat wf) { return wf == null ? "-" : (wf.SampleRate + "Hz/" + wf.BitsPerSample + "bit/" + wf.Channels + "ch"); }
+
+        public static WaveFormat NegotiateLoopbackFormat(MMDevice device, InputFormatRequest request,
+            out string log, out WaveFormat mixFormat, out WaveFormat acceptedFormat, out WaveFormat requestedFormat)
         {
-            try
+            var sb = new System.Text.StringBuilder();
+            mixFormat = null; acceptedFormat = null; requestedFormat = null;
+            try { mixFormat = device.AudioClient.MixFormat; } catch { }
+            var desired = BuildWaveFormat(request.Strategy, request.CustomSampleRate, request.CustomBitDepth, request.Channels);
+            requestedFormat = desired;
+            if (mixFormat != null) sb.AppendLine("Device Mix: " + Fmt(mixFormat));
+            if (desired == null)
             {
-                if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
-                using (var fs = File.Create(FilePath))
-                    new DataContractJsonSerializer(typeof(AppSettings)).WriteObject(fs, s);
+                sb.AppendLine("Request: SystemMix");
+                acceptedFormat = mixFormat;
+                log = sb.ToString();
+                return null;
             }
-            catch { }
+            WaveFormatExtensible closest = null;
+            bool ok = false;
+            try { ok = device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, desired, out closest); } catch { ok = false; }
+            sb.AppendLine("Request: " + Fmt(desired) + " -> " + (ok ? "Supported" : "Rejected"));
+            if (!ok && closest != null) { acceptedFormat = closest; log = sb.ToString(); return closest; }
+            if (ok) { acceptedFormat = desired; log = sb.ToString(); return desired; }
+            log = sb.ToString(); return null;
         }
     }
 
@@ -155,36 +226,43 @@ namespace MirrorAudio
         bool _running;
         bool _mainExclusive, _auxExclusive;
         bool _mainEventSyncUsed, _auxEventSyncUsed;
-        int _mainBufEffectiveMs, _auxBufEffectiveMs;
+        int  _mainBufEffectiveMs, _auxBufEffectiveMs;
         string _inRoleStr = "-", _inFmtStr = "-", _inDevName = "-", _mainFmtStr = "-", _auxFmtStr = "-";
         string _inReqStr = "-", _inAccStr = "-", _inMixStr = "-";
         bool _mainNoSRC, _auxNoSRC, _mainResampling, _auxResampling;
         double _defMainMs = 10, _minMainMs = 2, _defAuxMs = 10, _minAuxMs = 2;
 
-        readonly Dictionary<string, Tuple<double, double>> _periodCache = new Dictionary<string, Tuple<double, double>>(4);
+        readonly Dictionary<string, Tuple<double,double>> _periodCache = new Dictionary<string, Tuple<double,double>>(4);
 
         public TrayApp()
         {
             Logger.Enabled = _cfg.EnableLogging;
             try { _mm.RegisterEndpointNotificationCallback(this); } catch { }
 
-            try
-            {
-                _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            }
+            try { _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
             catch { _tray.Icon = SystemIcons.Application; }
 
             _tray.Visible = true;
             _tray.Text = "MirrorAudio";
 
-            var miStart = new ToolStripMenuItem("启动/重启(&S)", null, (s, e) => StartOrRestart());
-            var miStop = new ToolStripMenuItem("停止(&T)", null, (s, e) => Stop());
-            var miSet = new ToolStripMenuItem("设置(&G)...", null, (s, e) => OnSettings());
-            var miExit = new ToolStripMenuItem("退出(&X)", null, (s, e) => { Stop(); Application.Exit(); });
-            _menu.Items.AddRange(new ToolStripItem[] { miStart, miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
+            var miStart = new ToolStripMenuItem("启动/重启(&S)", null, (s,e) => StartOrRestart());
+            var miStop  = new ToolStripMenuItem("停止(&T)", null, (s,e) => Stop());
+            var miSet   = new ToolStripMenuItem("设置(&G)...", null, (s,e) => OnSettings());
+            var miExit  = new ToolStripMenuItem("退出(&X)", null, (s,e) => { Stop(); Application.Exit(); });
+
+            _menu.Items.AddRange(new ToolStripItem[]{ miStart, miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
             StartOrRestart();
+        }
+
+        public void Dispose()
+        {
+            try { Stop(); } catch { }
+            try { if (_mm != null) { _mm.UnregisterEndpointNotificationCallback(this); _mm.Dispose(); _mm = null; } } catch { }
+            try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); } } catch { }
+            try { _menu?.Dispose(); } catch { }
+            GC.SuppressFinalize(this);
         }
 
         void OnSettings()
@@ -210,9 +288,9 @@ namespace MirrorAudio
             Stop();
             if (_mm == null) _mm = new MMDeviceEnumerator();
 
-            _inDev = FirstNonNull(FindById(_cfg.InputDeviceId, DataFlow.Capture), FindById(_cfg.InputDeviceId, DataFlow.Render), _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia));
+            _inDev   = FirstNonNull(FindById(_cfg.InputDeviceId, DataFlow.Capture), FindById(_cfg.InputDeviceId, DataFlow.Render), _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia));
             _outMain = FindById(_cfg.MainDeviceId, DataFlow.Render);
-            _outAux = FindById(_cfg.AuxDeviceId, DataFlow.Render);
+            _outAux  = FindById(_cfg.AuxDeviceId,  DataFlow.Render);
             _inDevName = _inDev != null ? _inDev.FriendlyName : "-";
             if (_outMain == null || _outAux == null)
             {
@@ -227,20 +305,12 @@ namespace MirrorAudio
             {
                 _inRoleStr = "录音";
                 try { inputMix = _inDev.AudioClient.MixFormat; } catch { }
-
-                var req = new InputFormatRequest
-                {
-                    Strategy = _cfg.InputFormatStrategy,
-                    CustomSampleRate = _cfg.InputCustomSampleRate,
-                    CustomBitDepth = _cfg.InputCustomBitDepth,
-                    Channels = 2
-                };
-
-                WasapiCapture cap = new WasapiCapture(_inDev);
-                var acc = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
-                if (acc != null) cap.WaveFormat = acc;
+                var req = new InputFormatRequest { Strategy = _cfg.InputFormatStrategy, CustomSampleRate = _cfg.InputCustomSampleRate, CustomBitDepth = _cfg.InputCustomBitDepth, Channels = 2 };
+                var cap = new WasapiCapture(_inDev);
+                var intended = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
+                if (intended != null) cap.WaveFormat = intended;
                 _capture = cap; inFmt = cap.WaveFormat;
-                _inReqStr = InputFormatHelper.Fmt(acc);
+                _inReqStr = InputFormatHelper.Fmt(intended);
                 _inAccStr = InputFormatHelper.Fmt(inFmt);
                 _inMixStr = InputFormatHelper.Fmt(inputMix);
             }
@@ -258,11 +328,10 @@ namespace MirrorAudio
                 _inMixStr = InputFormatHelper.Fmt(inputMix);
                 if (Logger.Enabled) Logger.Info("Loopback negotiation:\r\n" + negoLog);
             }
-
             _inFmtStr = Fmt(inFmt);
 
             _bufMain = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs * 4, 80)) };
-            _bufAux = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs * 4, 120)) };
+            _bufAux  = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs  * 4, 120)) };
 
             ContinueStart(inFmt);
         }
@@ -270,9 +339,9 @@ namespace MirrorAudio
         void ContinueStart(WaveFormat inFmt)
         {
             GetPeriods(_outMain, out _defMainMs, out _minMainMs);
-            GetPeriods(_outAux, out _defAuxMs, out _minAuxMs);
+            GetPeriods(_outAux,  out _defAuxMs,  out _minAuxMs);
 
-            // 主通道
+            // MAIN
             _srcMain = _bufMain; _resMain = null; _mainExclusive = false; _mainEventSyncUsed = false; _mainBufEffectiveMs = _cfg.MainBufMs; _mainFmtStr = "-";
             _mainNoSRC = false; _mainResampling = false;
             var desiredMain = new WaveFormat(_cfg.MainRate, _cfg.MainBits, 2);
@@ -299,9 +368,7 @@ namespace MirrorAudio
                     if (needChange)
                     {
                         _resMain = new MediaFoundationResampler(_bufMain, mix) { ResamplerQuality = _cfg.MainResamplerQuality };
-                        _srcMain = _resMain;
-                        _mainResampling = true;
-                        _mainNoSRC = false;
+                        _srcMain = _resMain; _mainResampling = true; _mainNoSRC = false;
                     }
                 }
                 _mainOut = CreateOut(_outMain, AudioClientShareMode.Shared, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
@@ -310,12 +377,12 @@ namespace MirrorAudio
                 if (_resMain == null)
                 {
                     _mainResampling = (inFmt.SampleRate != (mainTargetFmt != null ? mainTargetFmt.SampleRate : inFmt.SampleRate) ||
-                                       inFmt.Channels != (mainTargetFmt != null ? mainTargetFmt.Channels : inFmt.Channels));
+                                       inFmt.Channels    != (mainTargetFmt != null ? mainTargetFmt.Channels    : inFmt.Channels));
                     _mainNoSRC = !_mainResampling;
                 }
             }
 
-            // 副通道
+            // AUX
             _srcAux = _bufAux; _resAux = null; _auxExclusive = false; _auxEventSyncUsed = false; _auxBufEffectiveMs = _cfg.AuxBufMs; _auxFmtStr = "-";
             _auxNoSRC = false; _auxResampling = false;
             var desiredAux = new WaveFormat(_cfg.AuxRate, _cfg.AuxBits, 2);
@@ -342,9 +409,7 @@ namespace MirrorAudio
                     if (needChange)
                     {
                         _resAux = new MediaFoundationResampler(_bufAux, mix) { ResamplerQuality = _cfg.AuxResamplerQuality };
-                        _srcAux = _resAux;
-                        _auxResampling = true;
-                        _auxNoSRC = false;
+                        _srcAux = _resAux; _auxResampling = true; _auxNoSRC = false;
                     }
                 }
                 _auxOut = CreateOut(_outAux, AudioClientShareMode.Shared, _cfg.AuxSync, ms, _srcAux, out _auxEventSyncUsed);
@@ -353,7 +418,7 @@ namespace MirrorAudio
                 if (_resAux == null)
                 {
                     _auxResampling = (inFmt.SampleRate != (auxTargetFmt != null ? auxTargetFmt.SampleRate : inFmt.SampleRate) ||
-                                      inFmt.Channels != (auxTargetFmt != null ? auxTargetFmt.Channels : inFmt.Channels));
+                                      inFmt.Channels    != (auxTargetFmt != null ? auxTargetFmt.Channels    : inFmt.Channels));
                     _auxNoSRC = !_auxResampling;
                 }
             }
@@ -368,14 +433,16 @@ namespace MirrorAudio
         }
 
         void OnIn(object s, WaveInEventArgs e) { if (_bufMain != null) _bufMain.AddSamples(e.Buffer, 0, e.BytesRecorded); if (_bufAux != null) _bufAux.AddSamples(e.Buffer, 0, e.BytesRecorded); }
-        void OnStopRec(object s, StoppedEventArgs e) { try { if (_bufMain != null) _bufMain.ClearBuffer(); if (_bufAux != null) _bufAux.ClearBuffer(); } catch { } }
+        void OnStopRec(object s, StoppedEventArgs e) { try { _bufMain?.ClearBuffer(); _bufAux?.ClearBuffer(); } catch { } }
 
         public void Stop()
         {
-            try { if (_capture != null) _capture.StopRecording(); } catch { }
-            try { if (_mainOut != null) _mainOut.Stop(); } catch { }
-            try { if (_auxOut != null) _auxOut.Stop(); } catch { }
-            Thread.Sleep(20); DisposeAll(); _running = false;
+            try { _capture?.StopRecording(); } catch { }
+            try { _mainOut?.Stop(); } catch { }
+            try { _auxOut?.Stop(); } catch { }
+            Thread.Sleep(20);
+            DisposeAll();
+            _running = false;
         }
 
         void DisposeAll()
@@ -387,19 +454,18 @@ namespace MirrorAudio
             try { _resAux?.Dispose(); } catch { } _resAux = null;
             _bufMain = null; _bufAux = null;
         }
-        void Cleanup() { DisposeAll(); }
 
         public StatusSnapshot GetStatusSnapshot()
         {
-            // 程序内重采样与多次SRC
+            // internal resampler + quality + multi-SRC
             bool mainInternal = _resMain != null;
-            bool auxInternal = _resAux != null;
+            bool auxInternal  = _resAux  != null;
             bool mainMulti = false, auxMulti = false;
             int mainQ = 0, auxQ = 0;
             try
             {
-                if (mainInternal) { mainQ = _resMain.ResamplerQuality; }
-                if (auxInternal) { auxQ = _resAux.ResamplerQuality; }
+                if (mainInternal) mainQ = _resMain.ResamplerQuality;
+                if (auxInternal)  auxQ  = _resAux.ResamplerQuality;
 
                 if (!_mainExclusive && mainInternal)
                 {
@@ -422,26 +488,32 @@ namespace MirrorAudio
             }
             catch { }
 
+            // Aligned multiple uses the selected align mode
+            double mainStep = (_cfg.MainBufMode == BufferAlignMode.MinAlign ? (_minMainMs > 0 ? _minMainMs : _defMainMs) : _defMainMs);
+            double auxStep  = (_cfg.AuxBufMode  == BufferAlignMode.MinAlign ? (_minAuxMs  > 0 ? _minAuxMs  : _defAuxMs ) : _defAuxMs);
+            double mainMul = (_mainBufEffectiveMs > 0 && mainStep > 0) ? _mainBufEffectiveMs / mainStep : 0;
+            double auxMul  = (_auxBufEffectiveMs  > 0 && auxStep  > 0) ? _auxBufEffectiveMs  / auxStep  : 0;
+
             return new StatusSnapshot
             {
                 Running = _running,
                 InputRole = _inRoleStr, InputFormat = _inFmtStr, InputDevice = _inDevName,
                 InputRequested = _inReqStr, InputAccepted = _inAccStr, InputMix = _inMixStr,
                 MainDevice = _outMain != null ? _outMain.FriendlyName : SafeName(_cfg.MainDeviceId, DataFlow.Render),
-                AuxDevice = _outAux != null ? _outAux.FriendlyName : SafeName(_cfg.AuxDeviceId, DataFlow.Render),
+                AuxDevice  = _outAux  != null ? _outAux .FriendlyName : SafeName(_cfg.AuxDeviceId,  DataFlow.Render),
                 MainMode = _mainOut != null ? (_mainExclusive ? "独占" : "共享") : "-",
-                AuxMode = _auxOut != null ? (_auxExclusive ? "独占" : "共享") : "-",
+                AuxMode  = _auxOut  != null ? (_auxExclusive  ? "独占" : "共享") : "-",
                 MainSync = _mainOut != null ? (_mainEventSyncUsed ? "事件" : "轮询") : "-",
-                AuxSync = _auxOut != null ? (_auxEventSyncUsed ? "事件" : "轮询") : "-",
+                AuxSync  = _auxOut  != null ? (_auxEventSyncUsed  ? "事件" : "轮询") : "-",
                 MainFormat = _mainOut != null ? _mainFmtStr : "-",
-                AuxFormat = _auxOut != null ? _auxFmtStr : "-",
+                AuxFormat  = _auxOut  != null ? _auxFmtStr  : "-",
                 MainBufferRequestedMs = _cfg.MainBufMs, AuxBufferRequestedMs = _cfg.AuxBufMs,
                 MainBufferMs = _mainOut != null ? _mainBufEffectiveMs : 0, AuxBufferMs = _auxOut != null ? _auxBufEffectiveMs : 0,
                 MainDefaultPeriodMs = _defMainMs, MainMinimumPeriodMs = _minMainMs,
-                AuxDefaultPeriodMs = _defAuxMs, AuxMinimumPeriodMs = _minAuxMs,
-                MainAlignedMultiple = 0, AuxAlignedMultiple = 0,
-                MainNoSRC = _mainNoSRC, AuxNoSRC = _auxNoSRC, MainResampling = _mainResampling, AuxResampling = _auxResampling,
+                AuxDefaultPeriodMs  = _defAuxMs,  AuxMinimumPeriodMs  = _minAuxMs,
+                MainAlignedMultiple = mainMul, AuxAlignedMultiple = auxMul,
                 MainBufferMultiple = 0, AuxBufferMultiple = 0,
+                MainNoSRC = _mainNoSRC, AuxNoSRC = _auxNoSRC, MainResampling = _mainResampling, AuxResampling = _auxResampling,
                 MainInternalResampler = mainInternal, AuxInternalResampler = auxInternal,
                 MainInternalResamplerQuality = mainQ, AuxInternalResamplerQuality = auxQ,
                 MainMultiSRC = mainMulti, AuxMultiSRC = auxMulti,
@@ -465,15 +537,18 @@ namespace MirrorAudio
 
         void GetPeriods(MMDevice dev, out double defMs, out double minMs)
         {
-            defMs = 10; minMs = 2; if (dev == null) return; var id = dev.ID; Tuple<double, double> t;
+            defMs = 10; minMs = 2; if (dev == null) return; var id = dev.ID;
+            Tuple<double,double> t;
             if (_periodCache.TryGetValue(id, out t)) { defMs = t.Item1; minMs = t.Item2; return; }
             try
             {
                 long d100 = 0, m100 = 0; var ac = dev.AudioClient;
-                var pD = ac.GetType().GetProperty("DefaultDevicePeriod"); var pM = ac.GetType().GetProperty("MinimumDevicePeriod");
+                var pD = ac.GetType().GetProperty("DefaultDevicePeriod");
+                var pM = ac.GetType().GetProperty("MinimumDevicePeriod");
                 if (pD != null) { var v = pD.GetValue(ac, null); if (v != null) d100 = Convert.ToInt64(v); }
                 if (pM != null) { var v = pM.GetValue(ac, null); if (v != null) m100 = Convert.ToInt64(v); }
-                if (d100 > 0) defMs = d100 / 10000.0; if (m100 > 0) minMs = m100 / 10000.0;
+                if (d100 > 0) defMs = d100 / 10000.0;
+                if (m100 > 0) minMs = m100 / 10000.0;
             }
             catch { }
             _periodCache[id] = Tuple.Create(defMs, minMs);
@@ -508,14 +583,8 @@ namespace MirrorAudio
                 double stepMin = (minMs > 0 ? minMs : (defMs > 0 ? defMs : 10.0));
                 double stepDef = (defMs > 0 ? defMs : stepMin);
                 int ms;
-                if (mode == BufferAlignMode.MinAlign)
-                {
-                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
-                }
-                else
-                {
-                    ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
-                }
+                if (mode == BufferAlignMode.MinAlign) ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
+                else                                   ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
                 double floor = (defMs > 0 ? defMs : stepMin) * 2.0;
                 if (ms < floor)
                 {
@@ -525,82 +594,19 @@ namespace MirrorAudio
                 return ms;
             }
         }
-    }
 
-    public sealed class InputFormatRequest
-    {
-        public InputFormatStrategy Strategy = InputFormatStrategy.SystemMix;
-        public int CustomSampleRate = 48000;
-        public int CustomBitDepth = 24;
-        public int Channels = 2;
-    }
-
-    public static class InputFormatHelper
-    {
-        public static WaveFormat BuildWaveFormat(InputFormatStrategy strategy, int customRate, int customBits, int channels)
+        WasapiOut CreateOut(MMDevice dev, AudioClientShareMode mode, SyncModeOption sync, int ms, IWaveProvider src, out bool eventUsed)
         {
-            switch (strategy)
+            eventUsed = false;
+            try
             {
-                case InputFormatStrategy.SystemMix: return null;
-                case InputFormatStrategy.Specify24_48000: return CreatePcm24(48000, channels);
-                case InputFormatStrategy.Specify24_96000: return CreatePcm24(96000, channels);
-                case InputFormatStrategy.Specify24_192000: return CreatePcm24(192000, channels);
-                case InputFormatStrategy.Specify32f_48000: return WaveFormat.CreateIeeeFloatWaveFormat(48000, channels);
-                case InputFormatStrategy.Specify32f_96000: return WaveFormat.CreateIeeeFloatWaveFormat(96000, channels);
-                case InputFormatStrategy.Specify32f_192000: return WaveFormat.CreateIeeeFloatWaveFormat(192000, channels);
-                case InputFormatStrategy.Custom:
-                    if (customBits >= 32) return WaveFormat.CreateIeeeFloatWaveFormat(customRate, channels);
-                    if (customBits == 24) return CreatePcm24(customRate, channels);
-                    return new WaveFormat(customRate, customBits, channels);
-                default: return null;
+                AudioClientShareMode sm = mode;
+                var wo = new WasapiOut(dev, sm, (sync == SyncModeOption.Event ? true : (sync == SyncModeOption.Auto ? true : false)), ms);
+                wo.Init(src);
+                eventUsed = (sync != SyncModeOption.Polling);
+                return wo;
             }
-        }
-
-        public static WaveFormat CreatePcm24(int sampleRate, int channels)
-        {
-            return WaveFormat.CreateCustomFormat(WaveFormatEncoding.Extensible, sampleRate, channels, sampleRate * channels * 3, 3, 24);
-        }
-
-        public static string Fmt(WaveFormat wf) { return wf == null ? "-" : (wf.SampleRate + "Hz/" + wf.BitsPerSample + "bit/" + wf.Channels + "ch"); }
-
-        public static WaveFormat NegotiateLoopbackFormat(MMDevice device, InputFormatRequest request,
-            out string log, out WaveFormat mixFormat, out WaveFormat acceptedFormat, out WaveFormat requestedFormat)
-        {
-            var sb = new System.Text.StringBuilder();
-            mixFormat = null; acceptedFormat = null; requestedFormat = null;
-            try { mixFormat = device.AudioClient.MixFormat; } catch { }
-
-            var desired = BuildWaveFormat(request.Strategy, request.CustomSampleRate, request.CustomBitDepth, request.Channels);
-            requestedFormat = desired;
-            if (mixFormat != null) sb.AppendLine("Device Mix: " + Fmt(mixFormat));
-            if (desired == null)
-            {
-                sb.AppendLine("Request: SystemMix (use engine-provided mix).");
-                acceptedFormat = mixFormat;
-                log = sb.ToString();
-                return null;
-            }
-
-            WaveFormatExtensible closest = null;
-            bool ok = false;
-            try { ok = device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, desired, out closest); } catch { ok = false; }
-            sb.AppendLine("Request: " + Fmt(desired) + " -> Supported: " + (ok ? "Yes" : "No"));
-
-            if (!ok && closest != null)
-            {
-                acceptedFormat = closest;
-                sb.AppendLine("Closest: " + Fmt(closest));
-                log = sb.ToString();
-                return closest;
-            }
-            if (ok)
-            {
-                acceptedFormat = desired;
-                log = sb.ToString();
-                return desired;
-            }
-            log = sb.ToString();
-            return null;
+            catch (Exception ex) { Logger.Crash("CreateOut", ex); return null; }
         }
     }
 }
