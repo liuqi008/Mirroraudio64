@@ -649,8 +649,19 @@ namespace MirrorAudio
             {
                 acceptedFormat = closest;
                 sb.AppendLine("Closest: " + Fmt(closest));
-                log = sb.ToS
-    // ============ ExclusiveWasapiCapture (minimal) ============
+                log = sb.ToString();
+                return closest;
+            }
+            if (ok)
+            {
+                acceptedFormat = desired;
+                log = sb.ToString();
+                return desired;
+            }
+            log = sb.ToString();
+            return null;
+        }
+    }
     class ExclusiveWasapiCapture : IWaveIn
     {
         public event EventHandler<WaveInEventArgs> DataAvailable;
