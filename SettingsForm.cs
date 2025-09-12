@@ -288,7 +288,7 @@ namespace MirrorAudio
         {
             StatusSnapshot s; try { s = _statusProvider(); } catch { s = new StatusSnapshot(); }
             lblRun.Text = s.Running ? "运行中" : "停止";
-            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | 实得: " + (s.InputFormat ?? "-"); + " | 独占=" + (s.InputExclusive ? "是" : "否")
+            lblInput.Text = (s.InputDevice ?? "-") + " | " + (s.InputRole ?? "-") + " | 实得: " + (s.InputFormat ?? "-") + " | 独占=" + (s.InputExclusive ? "是" : "否");
             lblInputReq.Text = "请求: " + (s.InputRequested ?? "-") + "  |  接受: " + (s.InputAccepted ?? "-") + "  |  混音: " + (s.InputMix ?? "-");
 
             lblMain.Text = (s.MainDevice ?? "-") + " | " + (s.MainMode ?? "-") + " | " + (s.MainSync ?? "-");
