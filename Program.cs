@@ -498,7 +498,7 @@ _mainOut = CreateOut(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, ms
 
                 MainInternalResampler = mainInternal, AuxInternalResampler = auxInternal,
                 MainInternalResamplerQuality = mainQ, AuxInternalResamplerQuality = auxQ,
-                MainMultiSRC = mainMulti, AuxMultiSRC = auxMulti
+                MainMultiSRC = mainMulti, AuxMultiSRC = auxMulti，
                 MainResampling = _mainResampling, AuxResampling = _auxResampling,
                 VirtualCableActive = _virtCapActive,
             };
