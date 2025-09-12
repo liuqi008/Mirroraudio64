@@ -88,7 +88,7 @@ namespace MirrorAudio
         public double MainDefaultPeriodMs, MainMinimumPeriodMs, AuxDefaultPeriodMs, AuxMinimumPeriodMs;
         public double MainAlignedMultiple, AuxAlignedMultiple;
 
-        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResampling;
+        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResamplinging;
         public bool VirtualCableActiveing;
         public bool MainInternalResampler, AuxInternalResampler;
         public int MainInternalResamplerQuality, AuxInternalResamplerQuality;
