@@ -502,13 +502,23 @@ namespace MirrorAudio
         string SafeName(string id, DataFlow flow)
         {
             if (string.IsNullOrEmpty(id)) return "-";
-            try { foreach (var d in _mm.EnumerateAudioEndPoints(flow, DeviceState.Active)) if (d.ID == id) return d.FriendlyName; } catch { }
+            try
+            {
+                foreach (var d in _mm.EnumerateAudioEndPoints(flow, DeviceState.Active))
+                    if (d.ID == id) return d.FriendlyName;
+            }
+            catch { }
             return "-";
         }
         MMDevice FindById(string id, DataFlow flow)
         {
             if (string.IsNullOrEmpty(id)) return null;
-            try { foreach (var d in _mm.EnumerateAudioEndPoints(flow, DeviceState.Active)) if (d.ID == id) return d; } catch { }
+            try
+            {
+                foreach (var d in _mm.EnumerateAudioEndPoints(flow, DeviceState.Active))
+                    if (d.ID == id) return d;
+            }
+            catch { }
             return null;
         }
         static T FirstNonNull<T>(params T[] arr) where T : class { foreach (var a in arr) if (a != null) return a; return null; }
