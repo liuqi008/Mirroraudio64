@@ -221,7 +221,7 @@ namespace MirrorAudio
                                 IWaveIn cap = null;
                 var acc = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
                 _inExclusive = _cfg.InputExclusive;
-                WaveFormat inputAccepted = null;
+                WaveFormat inputAccepted2 = null;
                 if (_inExclusive)
                 {
                     cap = TryCreateExclusiveCapture(_inDev, acc, out inputAccepted);
@@ -231,7 +231,7 @@ namespace MirrorAudio
                 {
                     var shared = new WasapiCapture(_inDev);
                     if (acc != null) shared.WaveFormat = acc;
-                    inputAccepted = shared.WaveFormat;
+                    inputAccepted2 = shared.WaveFormat;
                     cap = shared;
                 }
                 _capture = cap; inFmt = cap.WaveFormat;
@@ -256,7 +256,7 @@ namespace MirrorAudio
                 if (wf != null) cap.WaveFormat = wf;
                 _capture = cap; inFmt = cap.WaveFormat;
                 _inReqStr = InputFormatHelper.Fmt(inputRequested);
-                _inAccStr = InputFormatHelper.Fmt(inputAccepted ?? inFmt);
+                _inAccStr = InputFormatHelper.Fmt(inputAccepted ?? inputAccepted2 ?? inFmt);
                 _inMixStr = InputFormatHelper.Fmt(inputMix);
             }
 
@@ -725,7 +725,7 @@ namespace MirrorAudio
         {
             _client = _device.AudioClient;
             long defPer, minPer;
-            _client.GetDevicePeriod(out defPer, out minPer);
+            _client.DefaultDevicePeriod; var minPer = _client.MinimumDevicePeriod; var defPer = _client.DefaultDevicePeriod;
 
             var fmt = _request;
             if (!_client.IsFormatSupported(AudioClientShareMode.Exclusive, fmt))
@@ -740,7 +740,7 @@ namespace MirrorAudio
             }
             _format = fmt;
             _client.Initialize(AudioClientShareMode.Exclusive, AudioClientStreamFlags.EventCallback, minPer, minPer, _format, Guid.Empty);
-            _client.GetBufferSize(out _);
+            var _bsz = _client.BufferSize;
             _capture = _client.AudioCaptureClient;
             _eventHandle = CreateEvent(IntPtr.Zero, false, false, null);
             _client.SetEventHandle(_eventHandle);
@@ -766,7 +766,7 @@ namespace MirrorAudio
                     WaitForSingleObject(_eventHandle, INFINITE);
                     if (_stop) break;
                     int next;
-                    _capture.GetNextPacketSize(out next);
+                    next = _capture.GetNextPacketSize();
                     while (next > 0)
                     {
                         IntPtr ptr;
@@ -782,7 +782,7 @@ namespace MirrorAudio
                             DataAvailable?.Invoke(this, new WaveInEventArgs(buf, bytes));
                         }
                         _capture.ReleaseBuffer(frames);
-                        _capture.GetNextPacketSize(out next);
+                        next = _capture.GetNextPacketSize();
                     }
                 }
             }
