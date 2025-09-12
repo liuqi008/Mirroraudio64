@@ -318,8 +318,8 @@ namespace MirrorAudio
             lblAuxPer.Text  = "默认 " + s.AuxDefaultPeriodMs .ToString("0.##") + " ms / 最小 " + s.AuxMinimumPeriodMs .ToString("0.##") + " ms";
 
             // 根据“程序内重采样=是/否”控制右侧控件可用性（用户手动刷新以同步）
-            SetMainEnable(s.MainInternalResampler);
-            SetAuxEnable(s.AuxInternalResampler);
+            SetMainEnable(s.MainInternalResampler, s.MainResampling);
+            SetAuxEnable(s.AuxInternalResampler, s.AuxResampling);
         }
 
         void SaveAndClose()
@@ -442,15 +442,13 @@ namespace MirrorAudio
             return sb.ToString();
         }
 
-        void SetMainEnable(bool internalActive)
-        {
+        void SetMainEnable(bool internalActive, bool resamplingActive){
             cmbResampMain.Enabled = internalActive;
-            chkMainForceInShared.Enabled = internalActive;
+            chkMainForceInShared.Enabled = internalActive || resamplingActive;
         }
-        void SetAuxEnable(bool internalActive)
-        {
+        void SetAuxEnable(bool internalActive, bool resamplingActive){
             cmbResampAux.Enabled = internalActive;
-            chkAuxForceInShared.Enabled = internalActive;
+            chkAuxForceInShared.Enabled = internalActive || resamplingActive;
         }
     }
 }
