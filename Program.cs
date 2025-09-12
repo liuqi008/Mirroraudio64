@@ -78,21 +78,9 @@ namespace MirrorAudio
 
     public sealed class StatusSnapshot
     {
-        public bool Running;
-        public string InputRole, InputFormat, InputDevice;
-        public string InputRequested, InputAccepted, InputMix;
-        public string MainDevice, AuxDevice, MainMode, AuxMode, MainSync, AuxSync, MainFormat, AuxFormat;
-
-        public int MainBufferRequestedMs, AuxBufferRequestedMs;
-        public int MainBufferMs, AuxBufferMs;
-        public double MainDefaultPeriodMs, MainMinimumPeriodMs, AuxDefaultPeriodMs, AuxMinimumPeriodMs;
-        public double MainAlignedMultiple, AuxAlignedMultiple;
-
-        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResamplinging;
-        public bool VirtualCableActiveing;
-        public bool MainInternalResampler, AuxInternalResampler;
-        public int MainInternalResamplerQuality, AuxInternalResamplerQuality;
-        public bool MainMultiSRC, AuxMultiSRC;
+        public bool MainNoSRC, AuxNoSRC;
+        public bool MainResampling, AuxResampling;
+        public bool VirtualCableActive;
     }
 
     static class Config
@@ -505,14 +493,14 @@ _mainOut = CreateOut(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, ms
                 MainDefaultPeriodMs = _defMainMs, MainMinimumPeriodMs = _minMainMs,
                 AuxDefaultPeriodMs  = _defAuxMs,  AuxMinimumPeriodMs  = _minAuxMs,
 
-                MainAlignedMultiple = mainMul, AuxAlignedMultiple = auxMul, VirtualCableActive = _virtCapActive,
 
                 MainNoSRC = _mainNoSRC, AuxNoSRC = _auxNoSRC,
-                MainResampling = _mainResampling, AuxResampling = _auxResampling,
 
                 MainInternalResampler = mainInternal, AuxInternalResampler = auxInternal,
                 MainInternalResamplerQuality = mainQ, AuxInternalResamplerQuality = auxQ,
                 MainMultiSRC = mainMulti, AuxMultiSRC = auxMulti
+                MainResampling = _mainResampling, AuxResampling = _auxResampling,
+                VirtualCableActive = _virtCapActive,
             };
         }
 
