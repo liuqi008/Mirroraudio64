@@ -88,7 +88,7 @@ namespace MirrorAudio
         public double MainDefaultPeriodMs, MainMinimumPeriodMs, AuxDefaultPeriodMs, AuxMinimumPeriodMs;
         public double MainAlignedMultiple, AuxAlignedMultiple;
 
-        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResampl;
+        public bool MainNoSRC, AuxNoSRC, MainResampling, AuxResampling;
         public bool VirtualCableActiveing;
         public bool MainInternalResampler, AuxInternalResampler;
         public int MainInternalResamplerQuality, AuxInternalResamplerQuality;
@@ -286,7 +286,12 @@ namespace MirrorAudio
                 bool needChange = (inFmt.SampleRate != desiredMain.SampleRate) || (inFmt.Channels != desiredMain.Channels);
                 if (needChange) _srcMain = _resMain = new MediaFoundationResampler(_bufMain, desiredMain) { ResamplerQuality = _cfg.MainResamplerQuality };
                 int ms = BufAligned(_cfg.MainBufMs, true, _defMainMs, _minMainMs, _cfg.MainBufMode);
-                _mainOut = CreateOut(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
+                            if (_virtCapActive) {
+                double step = (_cfg.MainBufMode == BufferAlignMode.MinAlign ? _minMainMs : _defMainMs);
+                int floor2 = (int)System.Math.Ceiling(System.Math.Ceiling((step * 2.0) / step) * step);
+                if (ms < floor2) ms = floor2;
+            }
+_mainOut = CreateOut(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
                 if (_mainOut != null)
                 {
                     _mainExclusive = true; _mainBufEffectiveMs = ms; _mainFmtStr = Fmt(desiredMain); mainTargetFmt = desiredMain;
@@ -574,7 +579,7 @@ namespace MirrorAudio
                 // 独占：至少 3× 步长
                 if (mode == BufferAlignMode.MinAlign) ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
                 else                                   ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
-                double floor = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef) * (_virtCapActive ? 2.0 : 3.0);
+                double floor = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef) * 3.0;
                 if (ms < floor)
                 {
                     double step = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef);
