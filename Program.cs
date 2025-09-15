@@ -1,4 +1,3 @@
-
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,7 +7,6 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Threading;
 using System.Windows.Forms;
-using Microsoft.Win32;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using NAudio.MediaFoundation;
@@ -142,9 +140,9 @@ namespace MirrorAudio
         bool _running;
         bool _mainExclusive, _auxExclusive;
         bool _mainEventSyncUsed, _auxEventSyncUsed;
-
+        
         bool _inExclusive = false;
-        int _mainBufEffectiveMs, _auxBufEffectiveMs;
+int _mainBufEffectiveMs, _auxBufEffectiveMs;
         string _inRoleStr = "-", _inFmtStr = "-", _inDevName = "-", _mainFmtStr = "-", _auxFmtStr = "-";
         string _inReqStr = "-", _inAccStr = "-", _inMixStr = "-";
         bool _mainNoSRC, _auxNoSRC, _mainResampling, _auxResampling;
@@ -165,9 +163,6 @@ namespace MirrorAudio
             _menu.Items.AddRange(new ToolStripItem[] { miStart, miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
-            // 根据现有配置设置自启动
-            try { UpdateAutoStart(_cfg.AutoStart); } catch { }
-
             StartOrRestart();
         }
 
@@ -178,7 +173,6 @@ namespace MirrorAudio
                 if (f.ShowDialog() == DialogResult.OK)
                 {
                     _cfg = f.Result; Config.Save(_cfg);
-                    try { UpdateAutoStart(_cfg.AutoStart); } catch { }
                     StartOrRestart();
                 }
             }
@@ -223,45 +217,12 @@ namespace MirrorAudio
                     CustomBitDepth = _cfg.InputCustomBitDepth,
                     Channels = 2
                 };
-
-                // 录音设备：独占（可选）/ 共享
-                if (_cfg.InputExclusive)
-                {
-                    string nego; WaveFormat accepted;
-                    _capture = TryCreateExclusiveCapture(_inDev, InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2), out accepted);
-                    if (_capture != null)
-                    {
-                        _inExclusive = true;
-                        inFmt = (_capture as WasapiCapture).WaveFormat;
-                        inputRequested = (_capture as WasapiCapture).WaveFormat;
-                        inputAccepted = accepted ?? inFmt;
-                        Log("Input capture: Exclusive mode enabled, format=" + Fmt(inFmt));
-                    }
-                    else
-                    {
-                        // 独占失败回退共享
-                        var cap = new WasapiCapture(_inDev);
-                        var acc = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
-                        if (acc != null) cap.WaveFormat = acc;
-                        _capture = cap; inFmt = cap.WaveFormat; _inExclusive = false;
-                        inputRequested = acc;
-                        inputAccepted = inFmt;
-                        Log("Input capture: Exclusive requested but fallback to Shared, format=" + Fmt(inFmt));
-                    }
-                }
-                else
-                {
-                    var cap = new WasapiCapture(_inDev);
-                    var acc = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
-                    if (acc != null) cap.WaveFormat = acc;
-                    _capture = cap; inFmt = cap.WaveFormat; _inExclusive = false;
-                    inputRequested = acc;
-                    inputAccepted = inFmt;
-                    Log("Input capture: Shared mode, format=" + Fmt(inFmt));
-                }
-
-                _inReqStr = InputFormatHelper.Fmt(inputRequested);
-                _inAccStr = InputFormatHelper.Fmt(inputAccepted);
+                var cap = new WasapiCapture(_inDev);
+                var acc = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
+                if (acc != null) cap.WaveFormat = acc;
+                _capture = cap; inFmt = cap.WaveFormat;
+                _inReqStr = InputFormatHelper.Fmt(acc);
+                _inAccStr = InputFormatHelper.Fmt(inFmt);
                 _inMixStr = InputFormatHelper.Fmt(inputMix);
             }
             else
@@ -278,11 +239,10 @@ namespace MirrorAudio
                 };
                 var wf = InputFormatHelper.NegotiateLoopbackFormat(_inDev, req, out negoLog, out inputMix, out inputAccepted, out inputRequested);
                 if (wf != null) cap.WaveFormat = wf;
-                _capture = cap; inFmt = cap.WaveFormat; _inExclusive = false;
+                _capture = cap; inFmt = cap.WaveFormat;
                 _inReqStr = InputFormatHelper.Fmt(inputRequested);
                 _inAccStr = InputFormatHelper.Fmt(inputAccepted ?? inFmt);
                 _inMixStr = InputFormatHelper.Fmt(inputMix);
-                Log("Loopback capture: format=" + Fmt(inFmt));
             }
 
             _inFmtStr = Fmt(inFmt);
@@ -319,7 +279,6 @@ namespace MirrorAudio
                 {
                     _mainExclusive = true; _mainBufEffectiveMs = ms; _mainFmtStr = Fmt(desiredMain); mainTargetFmt = desiredMain;
                     _mainResampling = needChange; _mainNoSRC = !needChange;
-                    Log("Main out: Exclusive, fmt=" + _mainFmtStr + ", buf=" + ms + "ms");
                 }
             }
             if (_mainOut == null)
@@ -353,7 +312,6 @@ namespace MirrorAudio
                                        inFmt.Channels    != (mainTargetFmt != null ? mainTargetFmt.Channels    : inFmt.Channels));
                     _mainNoSRC = !_mainResampling;
                 }
-                Log("Main out: Shared, fmt=" + _mainFmtStr + ", buf=" + ms + "ms");
             }
 
             // ========== 副通道 ==========
@@ -377,7 +335,6 @@ namespace MirrorAudio
                 {
                     _auxExclusive = true; _auxBufEffectiveMs = ms; _auxFmtStr = Fmt(desiredAux); auxTargetFmt = desiredAux;
                     _auxResampling = needChange; _auxNoSRC = !needChange;
-                    Log("Aux out: Exclusive, fmt=" + _auxFmtStr + ", buf=" + ms + "ms");
                 }
             }
             if (_auxOut == null)
@@ -410,7 +367,6 @@ namespace MirrorAudio
                                       inFmt.Channels    != (auxTargetFmt != null ? auxTargetFmt.Channels    : inFmt.Channels));
                     _auxNoSRC = !_auxResampling;
                 }
-                Log("Aux out: Shared, fmt=" + _auxFmtStr + ", buf=" + ms + "ms");
             }
 
             _capture.DataAvailable += OnIn; _capture.RecordingStopped += OnStopRec;
@@ -418,12 +374,10 @@ namespace MirrorAudio
             {
                 _capture.StartRecording();
                 _mainOut.Play(); _auxOut.Play(); _running = true;
-                Log("Engine started.");
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 MessageBox.Show("启动失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Log("Engine start failed: " + ex.Message);
                 Stop();
             }
         }
@@ -446,7 +400,6 @@ namespace MirrorAudio
             Thread.Sleep(20);
             DisposeAll();
             _running = false;
-            Log("Engine stopped.");
         }
 
         void DisposeAll()
@@ -626,84 +579,40 @@ namespace MirrorAudio
             }
             catch { return null; }
         }
-
-        // 简单日志（按需写入临时目录）
-        void Log(string msg)
-        {
-            try
-            {
-                if (_cfg != null && _cfg.EnableLogging)
-                {
-                    File.AppendAllText(Path.Combine(Path.GetTempPath(), "MirrorAudio.run.log"),
-                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " " + msg + Environment.NewLine);
-                }
-            }
-            catch { }
-        }
-
-        // Windows 自启动
-        void UpdateAutoStart(bool enable)
-        {
-            try
-            {
-                string runKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
-                using (var key = Registry.CurrentUser.OpenSubKey(runKey, true))
-                {
-                    if (enable) key.SetValue("MirrorAudio", Application.ExecutablePath);
-                    else key.DeleteValue("MirrorAudio", false);
-                }
-            }
-            catch { }
-        }
-
-        // === Exclusive capture support ===
-        class ExclusiveWasapiCapture : WasapiCapture
-        {
-            public ExclusiveWasapiCapture(MMDevice captureDevice) : base(captureDevice) { }
-            protected override AudioClientShareMode GetShareMode() => AudioClientShareMode.Exclusive;
-        }
-
+    
+        // === Exclusive capture stub ===
         IWaveIn TryCreateExclusiveCapture(MMDevice dev, WaveFormat req, out WaveFormat accepted)
         {
             accepted = null;
+#if SUPPORT_WASAPI_EXCLUSIVE_CAPTURE
             try
             {
                 WaveFormat desired = req;
-                // 若未指定，则尝试设备 MixFormat（常为32f 48k），但独占下需检查支持
                 if (desired == null)
                 {
                     try { desired = dev.AudioClient.MixFormat; } catch { desired = null; }
                 }
-
                 WaveFormatExtensible closest;
                 bool ok = (desired != null) && dev.AudioClient.IsFormatSupported(AudioClientShareMode.Exclusive, desired, out closest);
-                if (!ok && closest != null)
-                {
-                    accepted = closest;
-                }
-                else if (ok)
-                {
-                    accepted = desired;
-                }
-                else
-                {
-                    // 独占不支持
-                    return null;
-                }
+                if (!ok && closest != null) accepted = closest;
+                else if (ok) accepted = desired;
+                else return null;
 
                 var cap = new ExclusiveWasapiCapture(dev);
-                // 设置期望格式（NAudio 在 StartRecording 前读取 WaveFormat）
                 if (accepted != null) cap.WaveFormat = accepted;
                 return cap;
             }
-            catch
-            {
-                return null;
-            }
+            catch { return null; }
+#else
+            // Your current NAudio build doesn't expose a safe way to force Exclusive capture via subclassing.
+            // Return null so upstream gracefully falls back to Shared and logs a note.
+            return null;
+#endif
         }
     }
 
     public sealed class InputFormatRequest
+
     {
         public InputFormatStrategy Strategy = InputFormatStrategy.SystemMix;
         public int CustomSampleRate = 48000;
@@ -780,4 +689,6 @@ namespace MirrorAudio
             return null;
         }
     }
+
+
 }
