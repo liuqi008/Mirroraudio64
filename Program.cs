@@ -250,9 +250,14 @@ namespace MirrorAudio
 
             _inFmtStr = Fmt(inFmt);
 
-            _bufMain = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs * 4, 80)) };
+            _bufMain = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(((_cfg.MainShare != ShareModeOption.Shared) && (_cfg.MainSync != SyncModeOption.Polling) ? _cfg.MainBufMs * 2 : _cfg.MainBufMs * 4), ((_cfg.MainShare != ShareModeOption.Shared) && (_cfg.MainSync != SyncModeOption.Polling) ? 24 : 80))) };
             _bufAux  = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs * 4, 120)) };
 
+            // 独占+事件预期下，减少主通道输入队列的排队与零填充
+            if ((_cfg.MainShare != ShareModeOption.Shared) && (_cfg.MainSync != SyncModeOption.Polling))
+            {
+                try { _bufMain.ReadFully = false; } catch { }
+            }
             ContinueStart(inFmt);
         }
 
@@ -278,7 +283,7 @@ namespace MirrorAudio
             {
                 bool needChange = (inFmt.SampleRate != desiredMain.SampleRate) || (inFmt.Channels != desiredMain.Channels);
                 if (needChange) _srcMain = _resMain = new MediaFoundationResampler(_bufMain, desiredMain) { ResamplerQuality = _cfg.MainResamplerQuality };
-                int ms = BufAligned(_cfg.MainBufMs, true, _defMainMs, _minMainMs, _cfg.MainBufMode);
+                int ms = BufAligned(_cfg.MainBufMs, true, (_cfg.MainSync == SyncModeOption.Event || _cfg.MainSync == SyncModeOption.Auto), _defMainMs, _minMainMs, _cfg.MainBufMode);
                 _mainOut = CreateOut(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
                 if (_mainOut != null)
                 {
@@ -288,7 +293,7 @@ namespace MirrorAudio
             }
             if (_mainOut == null)
             {
-                int ms = BufAligned(_cfg.MainBufMs, false, _defMainMs, 0, _cfg.MainBufMode);
+                int ms = BufAligned(_cfg.MainBufMs, false, (_cfg.MainSync == SyncModeOption.Event || _cfg.MainSync == SyncModeOption.Auto), _defMainMs, 0, _cfg.MainBufMode);
                 WaveFormat mix = null; try { mix = _outMain.AudioClient.MixFormat; } catch { }
 
                 // 共享模式下也程序内重采样（若开启且输入 != MixFormat）
@@ -337,7 +342,7 @@ namespace MirrorAudio
             {
                 bool needChange = (inFmt.SampleRate != desiredAux.SampleRate) || (inFmt.Channels != desiredAux.Channels);
                 if (needChange) _srcAux = _resAux = new MediaFoundationResampler(_bufAux, desiredAux) { ResamplerQuality = _cfg.AuxResamplerQuality };
-                int ms = BufAligned(_cfg.AuxBufMs, true, _defAuxMs, _minAuxMs, _cfg.AuxBufMode);
+                int ms = BufAligned(_cfg.AuxBufMs, true, (_cfg.AuxSync == SyncModeOption.Event || _cfg.AuxSync == SyncModeOption.Auto), _defAuxMs, _minAuxMs, _cfg.AuxBufMode);
                 _auxOut = CreateOut(_outAux, AudioClientShareMode.Exclusive, _cfg.AuxSync, ms, _srcAux, out _auxEventSyncUsed);
                 if (_auxOut != null)
                 {
@@ -347,7 +352,7 @@ namespace MirrorAudio
             }
             if (_auxOut == null)
             {
-                int ms = BufAligned(_cfg.AuxBufMs, false, _defAuxMs, 0, _cfg.AuxBufMode);
+                int ms = BufAligned(_cfg.AuxBufMs, false, (_cfg.AuxSync == SyncModeOption.Event || _cfg.AuxSync == SyncModeOption.Auto), _defAuxMs, 0, _cfg.AuxBufMode);
                 WaveFormat mix = null; try { mix = _outAux.AudioClient.MixFormat; } catch { }
 
                 if (_cfg.AuxForceInternalResamplerInShared && mix != null)
@@ -542,22 +547,34 @@ namespace MirrorAudio
 
         static bool SupportsExclusive(MMDevice d, WaveFormat f) { try { return d.AudioClient.IsFormatSupported(AudioClientShareMode.Exclusive, f); } catch { return false; } }
 
-        static int BufAligned(int wantMs, bool exclusive, double defMs, double minMs, BufferAlignMode mode)
+        static int BufAligned(int wantMs, bool exclusive, bool useEvent, double defMs, double minMs, BufferAlignMode mode)
         {
+            // 分档策略：
+            // 独占 + 事件：MinAlign >= 1× 最小周期；DefaultAlign >= 2× 默认周期
+            // 独占 + 轮询：MinAlign >= 2× 最小周期；DefaultAlign >= 3× 默认周期
+            // 共享：      DefaultAlign >= 2× 默认周期
             double stepMin = (minMs > 0 ? minMs : (defMs > 0 ? defMs : 10.0));
             double stepDef = (defMs > 0 ? defMs : stepMin);
             int ms;
             if (exclusive)
             {
-                // 独占：至少 3× 步长
-                if (mode == BufferAlignMode.MinAlign) ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
-                else                                   ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
-                double floor = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef) * 3.0;
-                if (ms < floor)
-                {
-                    double step = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef);
-                    ms = (int)Math.Ceiling(Math.Ceiling(floor / step) * step);
-                }
+                double step = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef);
+                double floorMul = useEvent ? (mode == BufferAlignMode.MinAlign ? 1.0 : 2.0)
+                                           : (mode == BufferAlignMode.MinAlign ? 2.0 : 3.0);
+                double floor = step * floorMul;
+                ms = (int)Math.Ceiling(Math.Ceiling(wantMs / step) * step);
+                if (ms < floor) ms = (int)Math.Ceiling(Math.Ceiling(floor / step) * step);
+                return ms;
+            }
+            else
+            {
+                double step = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef);
+                double floor = stepDef * 2.0;
+                ms = (int)Math.Ceiling(Math.Ceiling(wantMs / step) * step);
+                if (ms < floor) ms = (int)Math.Ceiling(Math.Ceiling(floor / step) * step);
+                return ms;
+            }
+        }
                 return ms;
             }
             else
