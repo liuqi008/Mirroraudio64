@@ -193,11 +193,14 @@ namespace MirrorAudio
             _outAux  = (_cfg.AuxDeviceId  == "__DISABLED__") ? null : FindById(_cfg.AuxDeviceId,  DataFlow.Render);
             _inDevName = _inDev != null ? _inDev.FriendlyName : "-";
 
-            // 至少需要打开一个通道；未关闭但未选择时提示
-            bool mainNeed = _cfg.MainDeviceId != "__DISABLED__";
-            bool auxNeed  = _cfg.AuxDeviceId  != "__DISABLED__";
-            if (!mainNeed && !auxNeed) { MessageBox.Show("主/副输出均已关闭，本次不启动音频。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
-            if ((mainNeed && _outMain == null) || (auxNeed && _outAux == null))
+            // 若两路均被关闭，则不启动音频
+            if (_cfg.MainDeviceId == "__DISABLED__" && _cfg.AuxDeviceId == "__DISABLED__")
+            {
+                MessageBox.Show("主/副输出均已关闭，本次不启动音频。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            // 若任一路需要设备但未选择，则提示
+            if ((_cfg.MainDeviceId != "__DISABLED__" && _outMain == null) || (_cfg.AuxDeviceId != "__DISABLED__" && _outAux == null))
             {
                 MessageBox.Show("请在“设置”选择主/副输出设备。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -259,7 +262,8 @@ namespace MirrorAudio
             if (_outAux  != null) GetPeriods(_outAux,  out _defAuxMs,  out _minAuxMs); else { _defAuxMs = _minAuxMs = 0; }
 
             // ========== 主通道 ==========
-            if (_outMain == null) goto SKIP_MAIN;
+            if (_outMain != null)
+            {
             _srcMain = _bufMain; _resMain = null; _mainExclusive = false; _mainEventSyncUsed = false; _mainBufEffectiveMs = _cfg.MainBufMs; _mainFmtStr = "-";
             _mainNoSRC = false; _mainResampling = false;
             var desiredMain = new WaveFormat(_cfg.MainRate, _cfg.MainBits, 2);
@@ -315,9 +319,10 @@ namespace MirrorAudio
                 }
             }
 
-            SKIP_MAIN:
+            }
             // ========== 副通道 ==========
-            if (_outAux == null) goto SKIP_AUX;
+            if (_outAux != null)
+            {
             _srcAux = _bufAux; _resAux = null; _auxExclusive = false; _auxEventSyncUsed = false; _auxBufEffectiveMs = _cfg.AuxBufMs; _auxFmtStr = "-";
             _auxNoSRC = false; _auxResampling = false;
             var desiredAux = new WaveFormat(_cfg.AuxRate, _cfg.AuxBits, 2);
@@ -372,11 +377,12 @@ namespace MirrorAudio
                 }
             }
 
+                        }
             _capture.DataAvailable += OnIn; _capture.RecordingStopped += OnStopRec;
             try
             {
                 _capture.StartRecording();
-                _mainOut.Play(); _auxOut.Play(); _running = true;
+                if (_mainOut != null) _mainOut.Play(); if (_auxOut != null) _auxOut.Play(); _running = true;
             }
             catch (Exception)
             {
@@ -467,7 +473,6 @@ namespace MirrorAudio
             double mainMul  = (_mainBufEffectiveMs > 0 && mainStep > 0) ? _mainBufEffectiveMs / mainStep : 0;
             double auxMul   = (_auxBufEffectiveMs  > 0 && auxStep  > 0) ? _auxBufEffectiveMs  / auxStep  : 0;
 
-            SKIP_AUX:
             return new StatusSnapshot
             {
                 Running = _running,
@@ -475,10 +480,10 @@ namespace MirrorAudio
                 InputRequested = _inReqStr, InputAccepted = _inAccStr, InputMix = _inMixStr,
 
                 MainDevice = (_cfg.MainDeviceId == "__DISABLED__") ? "关闭" : (_outMain != null ? _outMain.FriendlyName : SafeName(_cfg.MainDeviceId, DataFlow.Render)),
-                AuxDevice  = (_cfg.AuxDeviceId  == "__DISABLED__") ? "关闭" : (_outAux  != null ? _outAux .FriendlyName : SafeName(_cfg.AuxDeviceId,  DataFlow.Render)),
+                AuxDevice  = (_cfg.AuxDeviceId == "__DISABLED__") ? "关闭" : (_outAux  != null ? _outAux .FriendlyName : SafeName(_cfg.AuxDeviceId,  DataFlow.Render)),
 
                 MainMode = (_cfg.MainDeviceId == "__DISABLED__") ? "已关闭" : (_mainOut != null ? (_mainExclusive ? "独占" : "共享") : "-"),
-                AuxMode  = (_cfg.AuxDeviceId  == "__DISABLED__") ? "已关闭" : (_auxOut  != null ? (_auxExclusive  ? "独占" : "共享") : "-"),
+                AuxMode  = (_cfg.AuxDeviceId == "__DISABLED__") ? "已关闭" : (_auxOut  != null ? (_auxExclusive  ? "独占" : "共享") : "-"),
                 MainSync = _mainOut != null ? (_mainEventSyncUsed ? "事件" : "轮询") : "-",
                 AuxSync  = _auxOut  != null ? (_auxEventSyncUsed  ? "事件" : "轮询") : "-",
 
