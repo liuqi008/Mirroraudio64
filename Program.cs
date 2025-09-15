@@ -74,17 +74,16 @@ namespace MirrorAudio
         [DataMember] public int AuxResamplerQuality = 30;
         [DataMember] public bool MainForceInternalResamplerInShared = false;
         [DataMember] public bool AuxForceInternalResamplerInShared = false;
-
+    
 // 缓冲池参数：倍数（主缓冲*N）、兜底（ms）、补齐填充（ReadFully）
 [DataMember] public int  MainBufPoolMultiplier = 4;
 [DataMember] public int  MainBufPoolFloorMs    = 80;
-[DataMember] public bool MainBufReadFully      = true;
+[DataMember] public bool MainBufReadFully = _cfg.MainBufReadFully;
 
 [DataMember] public int  AuxBufPoolMultiplier  = 4;
 [DataMember] public int  AuxBufPoolFloorMs     = 80;
 [DataMember] public bool AuxBufReadFully       = true;
-
-    }
+}
 
     public sealed class StatusSnapshot
     {
@@ -260,8 +259,8 @@ namespace MirrorAudio
 
             _inFmtStr = Fmt(inFmt);
 
-            _bufMain = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = _cfg.MainBufReadFully, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs * _cfg.MainBufPoolMultiplier, _cfg.MainBufPoolFloorMs)) };
-            _bufAux  = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = _cfg.AuxBufReadFully,  BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs  * _cfg.AuxBufPoolMultiplier,  _cfg.AuxBufPoolFloorMs))  };
+            _bufMain = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = _cfg.AuxBufReadFully, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs * _cfg.MainBufPoolMultiplier, _cfg.MainBufPoolFloorMs)) };
+            _bufAux  = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs * _cfg.AuxBufPoolMultiplier, _cfg.AuxBufPoolFloorMs)) };
 
             ContinueStart(inFmt);
         }
