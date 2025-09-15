@@ -122,7 +122,9 @@ namespace MirrorAudio
         }
     }
 
-    sealed class TrayApp : IDisposable, IMMNotificationClient
+    sealed class TrayApp
+    {
+        const string DisabledId = "__DISABLED__"; : IDisposable, IMMNotificationClient
     {
         readonly NotifyIcon _tray = new NotifyIcon();
         readonly ContextMenuStrip _menu = new ContextMenuStrip();
@@ -189,11 +191,18 @@ namespace MirrorAudio
             _inDev = FirstNonNull(FindById(_cfg.InputDeviceId, DataFlow.Capture),
                                   FindById(_cfg.InputDeviceId, DataFlow.Render),
                                   _mm.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia));
-            _outMain = FindById(_cfg.MainDeviceId, DataFlow.Render);
-            _outAux = FindById(_cfg.AuxDeviceId, DataFlow.Render);
+            _outMain = (_cfg.MainDeviceId == DisabledId) ? null : FindById(_cfg.MainDeviceId, DataFlow.Render);
+            _outAux  = (_cfg.AuxDeviceId  == DisabledId) ? null : FindById(_cfg.AuxDeviceId,  DataFlow.Render);
             _inDevName = _inDev != null ? _inDev.FriendlyName : "-";
 
-            if (_outMain == null || _outAux == null)
+            // 若均被关闭，则不启动任何音频资源
+            if (_cfg.MainDeviceId == DisabledId && _cfg.AuxDeviceId == DisabledId)
+            {
+                MessageBox.Show("主/副输出均已关闭，本次不启动音频。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            // 若未选择设备且未显式关闭，则提示并返回
+            if ((_outMain == null && _cfg.MainDeviceId != DisabledId) || (_outAux == null && _cfg.AuxDeviceId != DisabledId))
             {
                 MessageBox.Show("请在“设置”选择主/副输出设备。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -251,10 +260,11 @@ namespace MirrorAudio
 
         void ContinueStart(WaveFormat inFmt)
         {
-            GetPeriods(_outMain, out _defMainMs, out _minMainMs);
-            GetPeriods(_outAux,  out _defAuxMs,  out _minAuxMs);
+            if (_cfg.MainDeviceId != DisabledId && _outMain != null) GetPeriods(_outMain, out _defMainMs, out _minMainMs); else { _defMainMs = _minMainMs = 0; }
+            if (_cfg.AuxDeviceId  != DisabledId && _outAux  != null) GetPeriods(_outAux,  out _defAuxMs,  out _minAuxMs); else { _defAuxMs = _minAuxMs = 0; }
 
             // ========== 主通道 ==========
+            if (_cfg.MainDeviceId == DisabledId || _outMain == null) goto SKIP_MAIN;
             _srcMain = _bufMain; _resMain = null; _mainExclusive = false; _mainEventSyncUsed = false; _mainBufEffectiveMs = _cfg.MainBufMs; _mainFmtStr = "-";
             _mainNoSRC = false; _mainResampling = false;
             var desiredMain = new WaveFormat(_cfg.MainRate, _cfg.MainBits, 2);
@@ -310,7 +320,9 @@ namespace MirrorAudio
                 }
             }
 
+            SKIP_MAIN:
             // ========== 副通道 ==========
+            if (_cfg.AuxDeviceId == DisabledId || _outAux == null) goto SKIP_AUX;
             _srcAux = _bufAux; _resAux = null; _auxExclusive = false; _auxEventSyncUsed = false; _auxBufEffectiveMs = _cfg.AuxBufMs; _auxFmtStr = "-";
             _auxNoSRC = false; _auxResampling = false;
             var desiredAux = new WaveFormat(_cfg.AuxRate, _cfg.AuxBits, 2);
@@ -467,7 +479,7 @@ namespace MirrorAudio
                 InputRequested = _inReqStr, InputAccepted = _inAccStr, InputMix = _inMixStr,
 
                 MainDevice = _outMain != null ? _outMain.FriendlyName : SafeName(_cfg.MainDeviceId, DataFlow.Render),
-                AuxDevice  = _outAux  != null ? _outAux .FriendlyName : SafeName(_cfg.AuxDeviceId,  DataFlow.Render),
+                AuxDevice  = (_cfg.AuxDeviceId == DisabledId) ? "关闭" : (_outAux  != null ? _outAux .FriendlyName : SafeName(_cfg.AuxDeviceId,  DataFlow.Render)),
 
                 MainMode = _mainOut != null ? (_mainExclusive ? "独占" : "共享") : "-",
                 AuxMode  = _auxOut  != null ? (_auxExclusive  ? "独占" : "共享") : "-",
