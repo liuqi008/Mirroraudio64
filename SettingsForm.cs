@@ -8,6 +8,7 @@ namespace MirrorAudio
 {
     sealed class SettingsForm : Form
     {
+        readonly CheckBox chkInputExclusive = new CheckBox();
         readonly Label lblRun=new Label(),
                        lblInput=new Label(),
                        lblInputReq=new Label(),
@@ -103,7 +104,11 @@ namespace MirrorAudio
             cmbMain.DropDownStyle  = ComboBoxStyle.DropDownList;
             cmbAux.DropDownStyle   = ComboBoxStyle.DropDownList;
 
-            AddRow(tDev, "通道1 输入设备",  cmbInput);
+            var pIn = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
+            chkInputExclusive.Text = "独占（仅录音）";
+            pIn.Controls.Add(cmbInput);
+            pIn.Controls.Add(chkInputExclusive);
+            AddRow(tDev, "通道1 输入设备", pIn);
             AddRow(tDev, "通道2 主输出设备", cmbMain);
             AddRow(tDev, "通道3 副输出设备", cmbAux);
 
@@ -240,22 +245,6 @@ namespace MirrorAudio
         void LoadConfig(AppSettings cur)
         {
             chkInputExclusive.Checked = cur.InputExclusive;
-            Result = new AppSettings
-            {
-                InputExclusive = chkInputExclusive.Checked,
-                InputDeviceId = cur.InputDeviceId, MainDeviceId = cur.MainDeviceId, AuxDeviceId = cur.AuxDeviceId,
-                MainShare = cur.MainShare, MainSync = cur.MainSync, MainRate = cur.MainRate, MainBits = cur.MainBits, MainBufMs = cur.MainBufMs,
-                AuxShare = cur.AuxShare, AuxSync = cur.AuxSync, AuxRate = cur.AuxRate, AuxBits = cur.AuxBits, AuxBufMs = cur.AuxBufMs,
-                MainBufMode = cur.MainBufMode, AuxBufMode = cur.AuxBufMode,
-                AutoStart = cur.AutoStart, EnableLogging = cur.EnableLogging,
-                InputFormatStrategy = cur.InputFormatStrategy,
-                InputCustomSampleRate = cur.InputCustomSampleRate,
-                InputCustomBitDepth = cur.InputCustomBitDepth,
-                MainResamplerQuality = cur.MainResamplerQuality,
-                AuxResamplerQuality = cur.AuxResamplerQuality,
-                MainForceInternalResamplerInShared = cur.MainForceInternalResamplerInShared,
-                AuxForceInternalResamplerInShared = cur.AuxForceInternalResamplerInShared
-            };
             SelectById(cmbInput, cur.InputDeviceId);
             SelectById(cmbMain,  cur.MainDeviceId);
             SelectById(cmbAux,   cur.AuxDeviceId);
@@ -282,6 +271,9 @@ namespace MirrorAudio
             cmbResampAux .SelectedItem = (cur.AuxResamplerQuality  == 0 ? "30" : cur.AuxResamplerQuality .ToString());
             chkMainForceInShared.Checked = cur.MainForceInternalResamplerInShared;
             chkAuxForceInShared .Checked = cur.AuxForceInternalResamplerInShared;
+
+            chkAutoStart.Checked = cur.AutoStart;
+            chkLogging.Checked   = cur.EnableLogging;
         }
 
         void RenderStatus()
@@ -348,6 +340,7 @@ namespace MirrorAudio
 
             Result = new AppSettings
             {
+                InputExclusive = chkInputExclusive.Checked,
                 InputDeviceId = inSel != null ? inSel.Id : null,
                 MainDeviceId  = mainSel.Id,
                 AuxDeviceId   = auxSel.Id,
