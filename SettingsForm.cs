@@ -1,3 +1,4 @@
+
 using System;
 using System.Drawing;
 using System.Text;
@@ -8,7 +9,7 @@ namespace MirrorAudio
 {
     sealed class SettingsForm : Form
     {
-    readonly CheckBox chkInputExclusive = new CheckBox();
+        readonly CheckBox chkInputExclusive = new CheckBox();
         readonly Label lblRun=new Label(),
                        lblInput=new Label(),
                        lblInputReq=new Label(),
@@ -104,12 +105,11 @@ namespace MirrorAudio
             cmbMain.DropDownStyle  = ComboBoxStyle.DropDownList;
             cmbAux.DropDownStyle   = ComboBoxStyle.DropDownList;
 
-            
-var pIn = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
-chkInputExclusive.Text = "独占（仅录音）";
-pIn.Controls.Add(cmbInput);
-pIn.Controls.Add(chkInputExclusive);
-AddRow(tDev, "通道1 输入设备", pIn);
+            var pIn = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
+            chkInputExclusive.Text = "独占（仅录音）";
+            pIn.Controls.Add(cmbInput);
+            pIn.Controls.Add(chkInputExclusive);
+            AddRow(tDev, "通道1 输入设备", pIn);
             AddRow(tDev, "通道2 主输出设备", cmbMain);
             AddRow(tDev, "通道3 副输出设备", cmbAux);
 
@@ -245,8 +245,8 @@ AddRow(tDev, "通道1 输入设备", pIn);
 
         void LoadConfig(AppSettings cur)
         {
-                                    chkInputExclusive.Checked = cur.InputExclusive;
-SelectById(cmbInput, cur.InputDeviceId);
+            chkInputExclusive.Checked = cur.InputExclusive;
+            SelectById(cmbInput, cur.InputDeviceId);
             SelectById(cmbMain,  cur.MainDeviceId);
             SelectById(cmbAux,   cur.AuxDeviceId);
 
@@ -272,6 +272,9 @@ SelectById(cmbInput, cur.InputDeviceId);
             cmbResampAux .SelectedItem = (cur.AuxResamplerQuality  == 0 ? "30" : cur.AuxResamplerQuality .ToString());
             chkMainForceInShared.Checked = cur.MainForceInternalResamplerInShared;
             chkAuxForceInShared .Checked = cur.AuxForceInternalResamplerInShared;
+
+            chkAutoStart.Checked = cur.AutoStart;
+            chkLogging.Checked   = cur.EnableLogging;
         }
 
         void RenderStatus()
