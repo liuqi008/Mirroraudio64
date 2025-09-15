@@ -33,6 +33,18 @@ namespace MirrorAudio
         readonly CheckBox chkMainForceInShared = new CheckBox();
         readonly CheckBox chkAuxForceInShared  = new CheckBox();
 
+// 缓冲池（倍数/兜底/补齐填充）
+readonly NumericUpDown numPoolMulMain   = new NumericUpDown();
+readonly NumericUpDown numPoolFloorMain = new NumericUpDown();
+readonly CheckBox     chkPoolReadMain   = new CheckBox();
+
+readonly NumericUpDown numPoolMulAux    = new NumericUpDown();
+readonly NumericUpDown numPoolFloorAux  = new NumericUpDown();
+readonly CheckBox     chkPoolReadAux    = new CheckBox();
+
+readonly LinkLabel    lnkResetPool      = new LinkLabel();
+
+
         readonly ComboBox cmbInStrategy=new ComboBox();
         readonly NumericUpDown numInRate=new NumericUpDown(), numInBits=new NumericUpDown();
 
@@ -163,6 +175,24 @@ namespace MirrorAudio
             cmbBufModeMain.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbBufModeMain.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
             AddRow(tMain, "缓冲对齐模式",  cmbBufModeMain);
+            // 缓冲池：倍数（主缓冲*N）；兜底；补齐填充
+            numPoolMulMain.Minimum = 1; numPoolMulMain.Maximum = 32; numPoolMulMain.Value = 4; numPoolMulMain.Width = 80;
+            numPoolFloorMain.Minimum = 0; numPoolFloorMain.Maximum = 2000; numPoolFloorMain.Value = 80; numPoolFloorMain.Increment = 10; numPoolFloorMain.Width = 100;
+            chkPoolReadMain.Text = "补齐填充"; chkPoolReadMain.Checked = true; chkPoolReadMain.AutoSize = true;
+            lnkResetPool.Text = "恢复初始值"; lnkResetPool.AutoSize = true; lnkResetPool.LinkClicked += (s1,e1)=>{
+                numPoolMulMain.Value=4; numPoolFloorMain.Value=80; chkPoolReadMain.Checked=true;
+                numPoolMulAux.Value=4; numPoolFloorAux.Value=80; chkPoolReadAux.Checked=true;
+            };
+            var pPoolMain = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
+            pPoolMain.Controls.Add(new Label{ Text="倍数×", AutoSize=true, Padding=new Padding(0,6,4,0)});
+            pPoolMain.Controls.Add(numPoolMulMain);
+            pPoolMain.Controls.Add(new Label{ Text="兜底(ms)", AutoSize=true, Padding=new Padding(8,6,4,0)});
+            pPoolMain.Controls.Add(numPoolFloorMain);
+            pPoolMain.Controls.Add(new Label{ Text=" ", AutoSize=true, Padding=new Padding(8,6,4,0)});
+            pPoolMain.Controls.Add(chkPoolReadMain);
+            pPoolMain.Controls.Add(new Label{ Text=" ", AutoSize=true, Padding=new Padding(8,6,4,0)});
+            pPoolMain.Controls.Add(lnkResetPool);
+            AddRow(tMain, "缓冲池：倍数（主缓冲*N）；兜底；补齐填充", pPoolMain);
 
             cmbResampMain.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampMain.Items.AddRange(new object[]{ "60", "50", "40", "30" });
@@ -196,6 +226,18 @@ namespace MirrorAudio
             cmbBufModeAux.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbBufModeAux.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
             AddRow(tAux, "缓冲对齐模式",  cmbBufModeAux);
+            // 缓冲池：倍数（主缓冲*N）；兜底；补齐填充（副）
+            numPoolMulAux.Minimum = 1; numPoolMulAux.Maximum = 32; numPoolMulAux.Value = 4; numPoolMulAux.Width = 80;
+            numPoolFloorAux.Minimum = 0; numPoolFloorAux.Maximum = 2000; numPoolFloorAux.Value = 80; numPoolFloorAux.Increment = 10; numPoolFloorAux.Width = 100;
+            chkPoolReadAux.Text = "补齐填充"; chkPoolReadAux.Checked = true; chkPoolReadAux.AutoSize = true;
+            var pPoolAux = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
+            pPoolAux.Controls.Add(new Label{ Text="倍数×", AutoSize=true, Padding=new Padding(0,6,4,0)});
+            pPoolAux.Controls.Add(numPoolMulAux);
+            pPoolAux.Controls.Add(new Label{ Text="兜底(ms)", AutoSize=true, Padding=new Padding(8,6,4,0)});
+            pPoolAux.Controls.Add(numPoolFloorAux);
+            pPoolAux.Controls.Add(new Label{ Text=" ", AutoSize=true, Padding=new Padding(8,6,4,0)});
+            pPoolAux.Controls.Add(chkPoolReadAux);
+            AddRow(tAux, "缓冲池：倍数（主缓冲*N）；兜底；补齐填充", pPoolAux);
 
             cmbResampAux.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampAux.Items.AddRange(new object[]{ "60", "50", "40", "30" });
@@ -280,6 +322,14 @@ namespace MirrorAudio
             cmbResampAux .SelectedItem = (cur.AuxResamplerQuality  == 0 ? "30" : cur.AuxResamplerQuality .ToString());
             chkMainForceInShared.Checked = cur.MainForceInternalResamplerInShared;
             chkAuxForceInShared .Checked = cur.AuxForceInternalResamplerInShared;
+            // 缓冲池（载入），兼容旧版默认
+            numPoolMulMain.Value   = Clamp(cur.MainBufPoolMultiplier == 0 ? 4 : cur.MainBufPoolMultiplier, 1, 32);
+            numPoolFloorMain.Value = Clamp(cur.MainBufPoolFloorMs    == 0 ? 80: cur.MainBufPoolFloorMs,    0, 2000);
+            chkPoolReadMain.Checked= (cur.MainBufReadFully == false ? false : true);
+            numPoolMulAux.Value    = Clamp(cur.AuxBufPoolMultiplier  == 0 ? 4 : cur.AuxBufPoolMultiplier,  1, 32);
+            numPoolFloorAux.Value  = Clamp(cur.AuxBufPoolFloorMs     == 0 ? 80: cur.AuxBufPoolFloorMs,     0, 2000);
+            chkPoolReadAux.Checked = (cur.AuxBufReadFully == false ? false : true);
+
         }
 
         void RenderStatus()
@@ -360,6 +410,13 @@ namespace MirrorAudio
                 AuxBufMode  = (cmbBufModeAux .SelectedIndex == 1 ? BufferAlignMode.MinAlign : BufferAlignMode.DefaultAlign),
 
                 AutoStart = chkAutoStart.Checked, EnableLogging = chkLogging.Checked,
+                // 缓冲池（保存）
+                MainBufPoolMultiplier = (int)numPoolMulMain.Value,
+                MainBufPoolFloorMs    = (int)numPoolFloorMain.Value,
+                MainBufReadFully      = chkPoolReadMain.Checked,
+                AuxBufPoolMultiplier  = (int)numPoolMulAux.Value,
+                AuxBufPoolFloorMs     = (int)numPoolFloorAux.Value,
+                AuxBufReadFully       = chkPoolReadAux.Checked,
 
                 InputFormatStrategy = (InputFormatStrategy)cmbInStrategy.SelectedIndex,
                 InputCustomSampleRate = (int)numInRate.Value,
