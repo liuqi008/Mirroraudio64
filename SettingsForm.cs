@@ -25,16 +25,7 @@ namespace MirrorAudio
         readonly ComboBox cmbBufModeMain = new ComboBox();
         readonly ComboBox cmbBufModeAux  = new ComboBox();
 
-        
-// 缓冲池设置控件
-readonly NumericUpDown numPoolMulMain = new NumericUpDown();
-readonly NumericUpDown numPoolFloorMain = new NumericUpDown();
-readonly CheckBox chkPoolReadMain = new CheckBox();
-
-readonly NumericUpDown numPoolMulAux = new NumericUpDown();
-readonly NumericUpDown numPoolFloorAux = new NumericUpDown();
-readonly CheckBox chkPoolReadAux = new CheckBox();
-readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericUpDown(), numBufMain=new NumericUpDown(),
+        readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericUpDown(), numBufMain=new NumericUpDown(),
                                numRateAux =new NumericUpDown(), numBitsAux =new NumericUpDown(), numBufAux =new NumericUpDown();
 
         readonly ComboBox cmbResampMain = new ComboBox();
@@ -172,18 +163,6 @@ readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericU
             cmbBufModeMain.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbBufModeMain.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
             AddRow(tMain, "缓冲对齐模式",  cmbBufModeMain);
-            // 缓冲池：倍数（主缓冲*N）；兜底；补齐填充
-            numPoolMulMain.Minimum = 1; numPoolMulMain.Maximum = 32; numPoolMulMain.Width = 80;
-            numPoolFloorMain.Minimum = 0; numPoolFloorMain.Maximum = 2000; numPoolFloorMain.Width = 100; numPoolFloorMain.Increment = 10;
-            chkPoolReadMain.Text = "补齐填充";
-            var pPoolMain = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
-            pPoolMain.Controls.Add(new Label{ Text="倍数×", AutoSize=true, Padding=new Padding(0,6,4,0)});
-            pPoolMain.Controls.Add(numPoolMulMain);
-            pPoolMain.Controls.Add(new Label{ Text="兜底(ms)", AutoSize=true, Padding=new Padding(8,6,4,0)});
-            pPoolMain.Controls.Add(numPoolFloorMain);
-            pPoolMain.Controls.Add(new Label{ Text=" ", AutoSize=true, Padding=new Padding(8,6,4,0)});
-            pPoolMain.Controls.Add(chkPoolReadMain);
-            AddRow(tMain, "缓冲池：倍数（主缓冲*N）；兜底；补齐填充", pPoolMain);
 
             cmbResampMain.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampMain.Items.AddRange(new object[]{ "60", "50", "40", "30" });
@@ -217,18 +196,6 @@ readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericU
             cmbBufModeAux.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbBufModeAux.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
             AddRow(tAux, "缓冲对齐模式",  cmbBufModeAux);
-            // 缓冲池：倍数（主缓冲*N）；兜底；补齐填充（副）
-            numPoolMulAux.Minimum = 1; numPoolMulAux.Maximum = 32; numPoolMulAux.Width = 80;
-            numPoolFloorAux.Minimum = 0; numPoolFloorAux.Maximum = 2000; numPoolFloorAux.Width = 100; numPoolFloorAux.Increment = 10;
-            chkPoolReadAux.Text = "补齐填充";
-            var pPoolAux = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Dock = DockStyle.Fill };
-            pPoolAux.Controls.Add(new Label{ Text="倍数×", AutoSize=true, Padding=new Padding(0,6,4,0)});
-            pPoolAux.Controls.Add(numPoolMulAux);
-            pPoolAux.Controls.Add(new Label{ Text="兜底(ms)", AutoSize=true, Padding=new Padding(8,6,4,0)});
-            pPoolAux.Controls.Add(numPoolFloorAux);
-            pPoolAux.Controls.Add(new Label{ Text=" ", AutoSize=true, Padding=new Padding(8,6,4,0)});
-            pPoolAux.Controls.Add(chkPoolReadAux);
-            AddRow(tAux, "缓冲池：倍数（主缓冲*N）；兜底；补齐填充", pPoolAux);
 
             cmbResampAux.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampAux.Items.AddRange(new object[]{ "60", "50", "40", "30" });
@@ -286,16 +253,7 @@ readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericU
                 AuxResamplerQuality = cur.AuxResamplerQuality,
                 MainForceInternalResamplerInShared = cur.MainForceInternalResamplerInShared,
                 AuxForceInternalResamplerInShared = cur.AuxForceInternalResamplerInShared
-            ,
-                // 缓冲池（保存）
-                MainBufPoolMultiplier = (int)numPoolMulMain.Value,
-                MainBufPoolFloorMs    = (int)numPoolFloorMain.Value,
-                MainBufReadFully      = chkPoolReadMain.Checked,
-
-                AuxBufPoolMultiplier  = (int)numPoolMulAux.Value,
-                AuxBufPoolFloorMs     = (int)numPoolFloorAux.Value,
-                AuxBufReadFully       = chkPoolReadAux.Checked
-};
+            };
             SelectById(cmbInput, cur.InputDeviceId);
             SelectById(cmbMain,  cur.MainDeviceId);
             SelectById(cmbAux,   cur.AuxDeviceId);
@@ -322,15 +280,6 @@ readonly NumericUpDown numRateMain=new NumericUpDown(), numBitsMain=new NumericU
             cmbResampAux .SelectedItem = (cur.AuxResamplerQuality  == 0 ? "30" : cur.AuxResamplerQuality .ToString());
             chkMainForceInShared.Checked = cur.MainForceInternalResamplerInShared;
             chkAuxForceInShared .Checked = cur.AuxForceInternalResamplerInShared;
-            // 缓冲池（载入）
-            numPoolMulMain.Value = Clamp(cur.MainBufPoolMultiplier, 1, 32);
-            numPoolFloorMain.Value = Clamp(cur.MainBufPoolFloorMs, 0, 2000);
-            chkPoolReadMain.Checked = cur.MainBufReadFully;
-
-            numPoolMulAux.Value = Clamp(cur.AuxBufPoolMultiplier, 1, 32);
-            numPoolFloorAux.Value = Clamp(cur.AuxBufPoolFloorMs, 0, 2000);
-            chkPoolReadAux.Checked = cur.AuxBufReadFully;
-
         }
 
         void RenderStatus()
