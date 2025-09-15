@@ -687,7 +687,15 @@ namespace MirrorAudio
                 return null;
             }
         }
-    }
+    
+        public void Dispose()
+        {
+            try { Stop(); } catch { }
+            try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); } } catch { }
+            try { _menu?.Dispose(); } catch { }
+            try { _mm?.Dispose(); } catch { }
+        }
+}
 
     public sealed class InputFormatRequest
     {
