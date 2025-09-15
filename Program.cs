@@ -78,7 +78,7 @@ namespace MirrorAudio
 // 缓冲池参数：倍数（主缓冲*N）、兜底（ms）、补齐填充（ReadFully）
 [DataMember] public int  MainBufPoolMultiplier = 4;
 [DataMember] public int  MainBufPoolFloorMs    = 80;
-[DataMember] public bool MainBufReadFully = _cfg.MainBufReadFully;
+[DataMember] public bool MainBufReadFully = true;
 
 [DataMember] public int  AuxBufPoolMultiplier  = 4;
 [DataMember] public int  AuxBufPoolFloorMs     = 80;
