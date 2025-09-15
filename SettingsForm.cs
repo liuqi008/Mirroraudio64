@@ -396,6 +396,9 @@ namespace MirrorAudio
                 cmbInput.Items.Add(new DevItem { Id = d.ID, Name = "环回: " + d.FriendlyName });
 
             cmbMain.Items.Clear(); cmbAux.Items.Clear();
+            // 关闭项（完全不占用资源）
+            cmbMain.Items.Add(new DevItem { Id = "__DISABLED__", Name = "关闭（不占用）" });
+            cmbAux .Items.Add(new DevItem { Id = "__DISABLED__", Name = "关闭（不占用）" });
             foreach (var d in mm.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
             {
                 var it = new DevItem { Id = d.ID, Name = d.FriendlyName };
