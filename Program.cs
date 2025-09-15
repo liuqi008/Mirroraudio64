@@ -574,25 +574,7 @@ namespace MirrorAudio
                 if (ms < floor) ms = (int)Math.Ceiling(Math.Ceiling(floor / step) * step);
                 return ms;
             }
-        }
-                return ms;
-            }
-            else
-            {
-                // 共享：至少 2× 默认周期
-                if (mode == BufferAlignMode.MinAlign) ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepMin) * stepMin);
-                else                                   ms = (int)Math.Ceiling(Math.Ceiling(wantMs / stepDef) * stepDef);
-                double floor = stepDef * 2.0;
-                if (ms < floor)
-                {
-                    double step = (mode == BufferAlignMode.MinAlign ? stepMin : stepDef);
-                    ms = (int)Math.Ceiling(Math.Ceiling(floor / step) * step);
-                }
-                return ms;
-            }
-        }
-
-        WasapiOut CreateOut(MMDevice dev, AudioClientShareMode mode, SyncModeOption syncMode, int bufMs, IWaveProvider src, out bool eventSync)
+        }WasapiOut CreateOut(MMDevice dev, AudioClientShareMode mode, SyncModeOption syncMode, int bufMs, IWaveProvider src, out bool eventSync)
         {
             eventSync = false;
             try
