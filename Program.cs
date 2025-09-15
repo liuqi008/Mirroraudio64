@@ -7,7 +7,6 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Threading;
 using System.Windows.Forms;
-using Microsoft.Win32;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using NAudio.MediaFoundation;
@@ -40,7 +39,6 @@ namespace MirrorAudio
         }
     }
 
-    // ====== 枚举 ======
     [DataContract] public enum ShareModeOption { [EnumMember] Auto, [EnumMember] Exclusive, [EnumMember] Shared }
     [DataContract] public enum SyncModeOption { [EnumMember] Auto, [EnumMember] Event, [EnumMember] Polling }
     [DataContract] public enum BufferAlignMode { [EnumMember] DefaultAlign, [EnumMember] MinAlign }
@@ -56,7 +54,6 @@ namespace MirrorAudio
         [EnumMember] Custom
     }
 
-    // ====== 设置对象 ======
     [DataContract]
     public sealed class AppSettings
     {
@@ -80,7 +77,6 @@ namespace MirrorAudio
         [DataMember] public bool AuxForceInternalResamplerInShared = false;
     }
 
-    // ====== 运行状态快照 ======
     public sealed class StatusSnapshot
     {
         public bool InputExclusive;
@@ -100,14 +96,10 @@ namespace MirrorAudio
         public bool MainMultiSRC, AuxMultiSRC;
     }
 
-    // ====== 配置存取 ======
     static class Config
     {
         static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MirrorAudio");
         static readonly string FilePath = Path.Combine(Dir, "settings.json");
-
-        public static string AppDataDir => Dir;
-        public static string LogPath => Path.Combine(Dir, "MirrorAudio.log");
 
         public static AppSettings Load()
         {
@@ -132,64 +124,6 @@ namespace MirrorAudio
         }
     }
 
-    // ====== 轻量日志器 ======
-    static class Log
-    {
-        static object _lock = new object();
-        public static bool Enabled = false;
-        public static void Info(string msg)
-        {
-            if (!Enabled) return;
-            try
-            {
-                if (!Directory.Exists(Config.AppDataDir)) Directory.CreateDirectory(Config.AppDataDir);
-                lock (_lock)
-                {
-                    File.AppendAllText(Config.LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {msg}\r\n");
-                }
-            }
-            catch { }
-        }
-        public static void Error(string msg, Exception ex = null)
-        {
-            Info("ERROR: " + msg + (ex != null ? " | " + ex : ""));
-        }
-    }
-
-    // ====== 自启动助手 ======
-    static class AutoStartHelper
-    {
-        const string RUN_KEY = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        const string VALUE_NAME = "MirrorAudio";
-
-        public static void Apply(bool enable)
-        {
-            try
-            {
-                using (var key = Registry.CurrentUser.OpenSubKey(RUN_KEY, true) ?? Registry.CurrentUser.CreateSubKey(RUN_KEY))
-                {
-                    if (enable)
-                    {
-                        string exe = Application.ExecutablePath;
-                        string val = $"\"{exe}\"";
-                        key.SetValue(VALUE_NAME, val, RegistryValueKind.String);
-                        Log.Info("AutoStart enabled: " + val);
-                    }
-                    else
-                    {
-                        if (key.GetValue(VALUE_NAME) != null)
-                        {
-                            key.DeleteValue(VALUE_NAME, false);
-                            Log.Info("AutoStart disabled");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex) { Log.Error("Apply AutoStart failed", ex); }
-        }
-    }
-
-    // ====== Tray 主体 ======
     sealed class TrayApp : IDisposable, IMMNotificationClient
     {
         readonly NotifyIcon _tray = new NotifyIcon();
@@ -206,9 +140,9 @@ namespace MirrorAudio
         bool _running;
         bool _mainExclusive, _auxExclusive;
         bool _mainEventSyncUsed, _auxEventSyncUsed;
-
+        
         bool _inExclusive = false;
-        int _mainBufEffectiveMs, _auxBufEffectiveMs;
+int _mainBufEffectiveMs, _auxBufEffectiveMs;
         string _inRoleStr = "-", _inFmtStr = "-", _inDevName = "-", _mainFmtStr = "-", _auxFmtStr = "-";
         string _inReqStr = "-", _inAccStr = "-", _inMixStr = "-";
         bool _mainNoSRC, _auxNoSRC, _mainResampling, _auxResampling;
@@ -218,11 +152,6 @@ namespace MirrorAudio
 
         public TrayApp()
         {
-            // 启用日志与自启动
-            Log.Enabled = _cfg.EnableLogging;
-            AutoStartHelper.Apply(_cfg.AutoStart);
-            Log.Info("App started. Logging=" + Log.Enabled + ", AutoStart=" + _cfg.AutoStart);
-
             try { _mm.RegisterEndpointNotificationCallback(this); } catch { }
             try { _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { _tray.Icon = SystemIcons.Application; }
             _tray.Visible = true; _tray.Text = "MirrorAudio";
@@ -244,9 +173,6 @@ namespace MirrorAudio
                 if (f.ShowDialog() == DialogResult.OK)
                 {
                     _cfg = f.Result; Config.Save(_cfg);
-                    Log.Enabled = _cfg.EnableLogging;
-                    Log.Info("Settings saved. Logging=" + Log.Enabled + ", AutoStart=" + _cfg.AutoStart + ", InputExclusive=" + _cfg.InputExclusive);
-                    AutoStartHelper.Apply(_cfg.AutoStart);
                     StartOrRestart();
                 }
             }
@@ -261,7 +187,6 @@ namespace MirrorAudio
 
         void StartOrRestart()
         {
-            Log.Info("StartOrRestart()");
             Stop();
             if (_mm == null) _mm = new MMDeviceEnumerator();
 
@@ -272,18 +197,16 @@ namespace MirrorAudio
             _outAux = FindById(_cfg.AuxDeviceId, DataFlow.Render);
             _inDevName = _inDev != null ? _inDev.FriendlyName : "-";
 
-            Log.Info("InputDev=" + _inDevName + ", MainOut=" + SafeName(_cfg.MainDeviceId, DataFlow.Render) + ", AuxOut=" + SafeName(_cfg.AuxDeviceId, DataFlow.Render));
-
             if (_outMain == null || _outAux == null)
             {
                 MessageBox.Show("请在“设置”选择主/副输出设备。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Log.Info("Missing main/aux device, abort.");
                 return;
             }
 
             WaveFormat inFmt;
             WaveFormat inputRequested = null, inputAccepted = null, inputMix = null;
 
+            
             if (_inDev.DataFlow == DataFlow.Capture)
             {
                 _inRoleStr = "录音";
@@ -295,53 +218,44 @@ namespace MirrorAudio
                     CustomBitDepth = _cfg.InputCustomBitDepth,
                     Channels = 2
                 };
-
-                // 根据设置尝试独占录音
                 IWaveIn cap = null;
-                _inExclusive = false;
-
-                try
+                WaveFormat acc = null;
+                var desired = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
+                if (_cfg.InputExclusive && desired != null)
                 {
-                    var acc = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
-                    if (_cfg.InputExclusive)
-                    {
-                        cap = TryCreateExclusiveCapture(_inDev, acc, out inputAccepted);
-                        if (cap != null)
-                        {
-                            _inExclusive = true;
-                            Log.Info("Exclusive capture created. Requested=" + InputFormatHelper.Fmt(acc) + ", Accepted=" + InputFormatHelper.Fmt(inputAccepted));
-                        }
-                        else
-                        {
-                            Log.Info("Exclusive capture not available; fallback to shared WasapiCapture.");
-                        }
-                    }
-
-                    if (cap == null)
-                    {
-                        var sharedCap = new WasapiCapture(_inDev); // 共享
-                        if (acc != null) sharedCap.WaveFormat = acc;
-                        cap = sharedCap;
-                        inputAccepted = sharedCap.WaveFormat;
-                    }
-                    _capture = cap; inFmt = (_capture as WasapiCapture)?.WaveFormat ?? inputAccepted ?? acc ?? inputMix;
-                    inputRequested = acc;
+                    cap = TryCreateExclusiveCapture(_inDev, desired, out acc);
                 }
-                catch (Exception ex)
+                if (cap == null)
                 {
-                    Log.Error("Create capture failed", ex);
-                    MessageBox.Show("创建输入设备失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    DisposeAll(); return;
+                    var shared = new WasapiCapture(_inDev);
+                    if (desired != null) shared.WaveFormat = desired;
+                    cap = shared; acc = shared.WaveFormat; _inExclusive = false;
                 }
-
-                _inReqStr = InputFormatHelper.Fmt(inputRequested);
+                _capture = cap; inFmt = acc;
+                _inReqStr = InputFormatHelper.Fmt(desired);
+                _inAccStr = InputFormatHelper.Fmt(inFmt);
+                _inMixStr = InputFormatHelper.Fmt(inputMix);
+            }
+     catch { }
+                var req = new InputFormatRequest
+                {
+                    Strategy = _cfg.InputFormatStrategy,
+                    CustomSampleRate = _cfg.InputCustomSampleRate,
+                    CustomBitDepth = _cfg.InputCustomBitDepth,
+                    Channels = 2
+                };
+                var cap = new WasapiCapture(_inDev);
+                var acc = InputFormatHelper.BuildWaveFormat(req.Strategy, req.CustomSampleRate, req.CustomBitDepth, 2);
+                if (acc != null) cap.WaveFormat = acc;
+                _capture = cap; inFmt = cap.WaveFormat;
+                _inReqStr = InputFormatHelper.Fmt(acc);
                 _inAccStr = InputFormatHelper.Fmt(inFmt);
                 _inMixStr = InputFormatHelper.Fmt(inputMix);
             }
             else
             {
                 _inRoleStr = "环回";
-                var cap = new WasapiLoopbackCapture(_inDev); // 环回仅支持共享
+                var cap = new WasapiLoopbackCapture(_inDev);
                 string negoLog;
                 var req = new InputFormatRequest
                 {
@@ -353,8 +267,6 @@ namespace MirrorAudio
                 var wf = InputFormatHelper.NegotiateLoopbackFormat(_inDev, req, out negoLog, out inputMix, out inputAccepted, out inputRequested);
                 if (wf != null) cap.WaveFormat = wf;
                 _capture = cap; inFmt = cap.WaveFormat;
-                _inExclusive = false; // 环回不独占
-                Log.Info("Loopback: " + negoLog?.Replace("\r", " ").Replace("\n", " | "));
                 _inReqStr = InputFormatHelper.Fmt(inputRequested);
                 _inAccStr = InputFormatHelper.Fmt(inputAccepted ?? inFmt);
                 _inMixStr = InputFormatHelper.Fmt(inputMix);
@@ -372,7 +284,6 @@ namespace MirrorAudio
         {
             GetPeriods(_outMain, out _defMainMs, out _minMainMs);
             GetPeriods(_outAux,  out _defAuxMs,  out _minAuxMs);
-            Log.Info($"Periods Main(def={_defMainMs:0.###} min={_minMainMs:0.###}) Aux(def={_defAuxMs:0.###} min={_minAuxMs:0.###})");
 
             // ========== 主通道 ==========
             _srcMain = _bufMain; _resMain = null; _mainExclusive = false; _mainEventSyncUsed = false; _mainBufEffectiveMs = _cfg.MainBufMs; _mainFmtStr = "-";
@@ -382,10 +293,7 @@ namespace MirrorAudio
             bool isLoopMain = (_inDev.DataFlow == DataFlow.Render) && _inDev.ID == _outMain.ID;
             bool wantExMain = (_cfg.MainShare == ShareModeOption.Exclusive || _cfg.MainShare == ShareModeOption.Auto) && !isLoopMain;
             if (isLoopMain && (_cfg.MainShare != ShareModeOption.Shared))
-            {
                 MessageBox.Show("输入为主设备环回，独占冲突，主通道改走共享。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Log.Info("Main exclusive disabled due to loopback input conflict.");
-            }
 
             WaveFormat mainTargetFmt = null;
             if (wantExMain && SupportsExclusive(_outMain, desiredMain))
@@ -398,7 +306,6 @@ namespace MirrorAudio
                 {
                     _mainExclusive = true; _mainBufEffectiveMs = ms; _mainFmtStr = Fmt(desiredMain); mainTargetFmt = desiredMain;
                     _mainResampling = needChange; _mainNoSRC = !needChange;
-                    Log.Info($"Main Out EXCLUSIVE {Fmt(desiredMain)} buf={ms}ms resample={needChange}");
                 }
             }
             if (_mainOut == null)
@@ -406,6 +313,7 @@ namespace MirrorAudio
                 int ms = BufAligned(_cfg.MainBufMs, false, _defMainMs, 0, _cfg.MainBufMode);
                 WaveFormat mix = null; try { mix = _outMain.AudioClient.MixFormat; } catch { }
 
+                // 共享模式下也程序内重采样（若开启且输入 != MixFormat）
                 if (_cfg.MainForceInternalResamplerInShared && mix != null)
                 {
                     bool needChange = (inFmt.SampleRate != mix.SampleRate) || (inFmt.Channels != mix.Channels) || (inFmt.BitsPerSample != mix.BitsPerSample);
@@ -414,7 +322,6 @@ namespace MirrorAudio
                         _resMain = new MediaFoundationResampler(_bufMain, mix) { ResamplerQuality = _cfg.MainResamplerQuality };
                         _srcMain = _resMain;
                         _mainResampling = true; _mainNoSRC = false;
-                        Log.Info($"Main Shared internal resampler -> {Fmt(mix)} quality={_cfg.MainResamplerQuality}");
                     }
                 }
 
@@ -422,7 +329,6 @@ namespace MirrorAudio
                 if (_mainOut == null)
                 {
                     MessageBox.Show("主通道初始化失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    Log.Error("Main Out init failed");
                     DisposeAll(); return;
                 }
                 _mainBufEffectiveMs = ms;
@@ -433,7 +339,6 @@ namespace MirrorAudio
                                        inFmt.Channels    != (mainTargetFmt != null ? mainTargetFmt.Channels    : inFmt.Channels));
                     _mainNoSRC = !_mainResampling;
                 }
-                Log.Info($"Main Out SHARED {(_mainFmtStr)} buf={ms}ms resample={_mainResampling}");
             }
 
             // ========== 副通道 ==========
@@ -444,10 +349,7 @@ namespace MirrorAudio
             bool isLoopAux = (_inDev.DataFlow == DataFlow.Render) && _inDev.ID == _outAux.ID;
             bool wantExAux = (_cfg.AuxShare == ShareModeOption.Exclusive || _cfg.AuxShare == ShareModeOption.Auto) && !isLoopAux;
             if (isLoopAux && (_cfg.AuxShare != ShareModeOption.Shared))
-            {
                 MessageBox.Show("输入为副设备环回，独占冲突，副通道改走共享。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Log.Info("Aux exclusive disabled due to loopback input conflict.");
-            }
 
             WaveFormat auxTargetFmt = null;
             if (wantExAux && SupportsExclusive(_outAux, desiredAux))
@@ -460,7 +362,6 @@ namespace MirrorAudio
                 {
                     _auxExclusive = true; _auxBufEffectiveMs = ms; _auxFmtStr = Fmt(desiredAux); auxTargetFmt = desiredAux;
                     _auxResampling = needChange; _auxNoSRC = !needChange;
-                    Log.Info($"Aux Out EXCLUSIVE {Fmt(desiredAux)} buf={ms}ms resample={needChange}");
                 }
             }
             if (_auxOut == null)
@@ -476,7 +377,6 @@ namespace MirrorAudio
                         _resAux = new MediaFoundationResampler(_bufAux, mix) { ResamplerQuality = _cfg.AuxResamplerQuality };
                         _srcAux = _resAux;
                         _auxResampling = true; _auxNoSRC = false;
-                        Log.Info($"Aux Shared internal resampler -> {Fmt(mix)} quality={_cfg.AuxResamplerQuality}");
                     }
                 }
 
@@ -484,7 +384,6 @@ namespace MirrorAudio
                 if (_auxOut == null)
                 {
                     MessageBox.Show("副通道初始化失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    Log.Error("Aux Out init failed");
                     DisposeAll(); return;
                 }
                 _auxBufEffectiveMs = ms;
@@ -495,7 +394,6 @@ namespace MirrorAudio
                                       inFmt.Channels    != (auxTargetFmt != null ? auxTargetFmt.Channels    : inFmt.Channels));
                     _auxNoSRC = !_auxResampling;
                 }
-                Log.Info($"Aux Out SHARED {(_auxFmtStr)} buf={ms}ms resample={_auxResampling}");
             }
 
             _capture.DataAvailable += OnIn; _capture.RecordingStopped += OnStopRec;
@@ -503,11 +401,9 @@ namespace MirrorAudio
             {
                 _capture.StartRecording();
                 _mainOut.Play(); _auxOut.Play(); _running = true;
-                Log.Info("Started: capture+main+aux running.");
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Log.Error("Start failed", ex);
                 MessageBox.Show("启动失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Stop();
             }
@@ -521,7 +417,6 @@ namespace MirrorAudio
         void OnStopRec(object s, StoppedEventArgs e)
         {
             try { if (_bufMain != null) _bufMain.ClearBuffer(); if (_bufAux != null) _bufAux.ClearBuffer(); } catch { }
-            Log.Info("Capture stopped.");
         }
 
         public void Stop()
@@ -532,7 +427,6 @@ namespace MirrorAudio
             Thread.Sleep(20);
             DisposeAll();
             _running = false;
-            Log.Info("Stopped & disposed.");
         }
 
         void DisposeAll()
@@ -710,37 +604,31 @@ namespace MirrorAudio
                 wo.Init(src);
                 return wo;
             }
-            catch (Exception ex) { Log.Error("CreateOut failed", ex); return null; }
+            catch { return null; }
         }
-
-        // === 独占录音：基于 WasapiCapture 子类化（覆写 ShareMode） ===
-        class WasapiCaptureExclusive : WasapiCapture
-        {
-            public WasapiCaptureExclusive(MMDevice captureDevice) : base(captureDevice) { }
-            protected override AudioClientShareMode ShareMode => AudioClientShareMode.Exclusive;
-        }
-
+    
+        // === Exclusive capture stub ===
         IWaveIn TryCreateExclusiveCapture(MMDevice dev, WaveFormat req, out WaveFormat accepted)
         {
             accepted = null;
             try
             {
-                var cap = new WasapiCaptureExclusive(dev);
-                if (req != null) cap.WaveFormat = req; // 不设置则由驱动/设备决定
-                // 初始化将在 StartRecording 触发，但 NAudio 会根据 WaveFormat 执行 Initialize(Exclusive)
+                // NAudio 2.x: WasapiCapture(MMDevice device, bool eventSync, int latencyMs, AudioClientShareMode shareMode)
+                var cap = new WasapiCapture(dev, true, 20, AudioClientShareMode.Exclusive);
+                if (req != null) cap.WaveFormat = req;
                 accepted = cap.WaveFormat;
+                _inExclusive = true;
                 return cap;
             }
-            catch (Exception ex)
+            catch
             {
-                Log.Error("TryCreateExclusiveCapture failed", ex);
-                accepted = null;
+                // fallback by caller
                 return null;
             }
+        } catch { return null; }
         }
-    }
+}
 
-    // ====== 输入请求结构 ======
     public sealed class InputFormatRequest
     {
         public InputFormatStrategy Strategy = InputFormatStrategy.SystemMix;
@@ -749,7 +637,6 @@ namespace MirrorAudio
         public int Channels = 2;
     }
 
-    // ====== 输入格式工具 ======
     public static class InputFormatHelper
     {
         public static WaveFormat BuildWaveFormat(InputFormatStrategy strategy, int customRate, int customBits, int channels)
@@ -819,4 +706,6 @@ namespace MirrorAudio
             return null;
         }
     }
+
+
 }
