@@ -97,7 +97,6 @@ internal sealed class WasapiExclusiveRenderer : IDisposable
 }
 
 
-{
     static class Program
     {
         static Mutex _mtx;
@@ -751,5 +750,4 @@ internal sealed class WasapiExclusiveRenderer : IDisposable
             return null;
         }
     }
-}
 }
