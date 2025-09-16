@@ -158,7 +158,7 @@ static class Config
             var miStop = new ToolStripMenuItem("停止(&T)", null, (s, e) => Stop());
             var miSet = new ToolStripMenuItem("设置(&G)...", null, (s, e) => OnSettings());
             var miExit = new ToolStripMenuItem("退出(&X)", null, (s, e) => { Stop(); Application.Exit(); });
-            _menu.Items.AddRange(new ToolStripItem[] { miStart, new ToolStripSeparator(), miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit }), miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
+            _menu.Items.AddRange(new ToolStripItem[] { miStart, new ToolStripSeparator(), miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
             StartOrRestart();
@@ -635,4 +635,5 @@ public static class InputFormatHelper
         if (ok) { acceptedFormat = desired; log = sb.ToString(); return desired; }
         acceptedFormat = mixFormat; log = sb.ToString(); return mixFormat;
     }
+}
 }
