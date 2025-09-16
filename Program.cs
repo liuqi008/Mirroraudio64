@@ -29,13 +29,13 @@ internal sealed class SpscRingBuffer : IDisposable
     public int AvailableToWrite => Capacity - AvailableToRead - 1;
     public int Write(ReadOnlySpan<byte> src){
         if (_disposed) return 0; int toWrite=Math.Min(src.Length, AvailableToWrite); if (toWrite<=0) return 0;
-        int w=_write; int first=Math.Min(toWrite, Capacity-w); src[..first].CopyTo(_buf.AsSpan(w, first));
+        int w=_write; int first=Math.Min(toWrite, Capacity-w); src.Slice(0, first).CopyTo(_buf.AsSpan(w, first));
         int remain=toWrite-first; if(remain>0) src.Slice(first, remain).CopyTo(_buf.AsSpan(0, remain));
         Volatile.Write(ref _write, (w+toWrite)%Capacity); return toWrite; }
     public int Read(Span<byte> dst){
         if (_disposed){ dst.Clear(); return 0; } int toRead=Math.Min(dst.Length, AvailableToRead); int r=_read;
-        int first=Math.Min(toRead, Capacity-r); _buf.AsSpan(r, first).CopyTo(dst[..first]);
-        int remain=toRead-first; if(remain>0) _buf.AsSpan(0, remain).CopyTo(dst[first:]);
+        int first=Math.Min(toRead, Capacity-r); _buf.AsSpan(r, first).CopyTo(dst.Slice(0, first));
+        int remain=toRead-first; if(remain>0) _buf.AsSpan(0, remain).CopyTo(dst.Slice(first));
         Volatile.Write(ref _read, (r+toRead)%Capacity); return toRead; }
     public void Dispose(){ if(!_disposed){ _disposed=true; ArrayPool<byte>.Shared.Return(_buf); } }
 }
@@ -84,7 +84,7 @@ internal sealed class WasapiExclusiveRenderer : IDisposable
                     System.Runtime.InteropServices.Marshal.Copy(temp, 0, p, got);
                     if (got < batch){
                         var zeros = new byte[batch-got];
-                        System.Runtime.InteropServices.Marshal.Copy(zeros, 0, p + got, zeros.Length);
+                        System.Runtime.InteropServices.Marshal.Copy(zeros, 0, System.IntPtr.Add(p, got), zeros.Length);
                     }
                     _rc.ReleaseBuffer(batch / frameBytes, 0);
                     left -= batch;
@@ -109,8 +109,8 @@ internal sealed class WasapiExclusiveRenderer : IDisposable
             _mtx = new Mutex(true, "Global\\MirrorAudio_{7D21A2D9-6C1D-4C2A-9A49-6F9D3092B3F7}", out ok);
             if (!ok) return;
 
-            Application.ThreadException += (s, e) => { try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "MirrorAudio.crash.log"), e.Exception.ToString()); } catch { } };
-            AppDomain.CurrentDomain.UnhandledException += (s, e) => { try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "MirrorAudio.crash.log"), (e.ExceptionObject as Exception)?.ToString()); } catch { } };
+            Application.ThreadException += (s, e) => { try { System.IO.File.AppendAllText(System.IO.Path.Combine(Config.Dir, "MirrorAudio.crash.log"), e.Exception.ToString()); } catch { } };
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => { try { System.IO.File.AppendAllText(System.IO.Path.Combine(Config.Dir, "MirrorAudio.crash.log"), (e.ExceptionObject as System.Exception)?.ToString()); } catch { } };
 
             try { MediaFoundationApi.Startup(); } catch { }
             Application.EnableVisualStyles();
@@ -751,4 +751,5 @@ internal sealed class WasapiExclusiveRenderer : IDisposable
             return null;
         }
     }
+}
 }
