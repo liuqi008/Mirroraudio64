@@ -16,31 +16,92 @@ namespace MirrorAudio
 {
 
 using System.Threading;
-using System.Buffers;
+
 
 internal sealed class SpscRingBuffer : IDisposable
-{
-    private readonly byte[] _buf;
-    private int _read, _write;
-    private volatile bool _disposed;
-    public SpscRingBuffer(int capacityBytes){ _buf = ArrayPool<byte>.Shared.Rent(Math.Max(4096, capacityBytes)); }
-    public int Capacity => _buf.Length;
-    public int AvailableToRead { get { int w=Volatile.Read(ref _write), r=Volatile.Read(ref _read); return (w>=r)?(w-r):(Capacity-(r-w)); } }
-    public int AvailableToWrite => Capacity - AvailableToRead - 1;
-    public int Write(ReadOnlySpan<byte> src){
-        if (_disposed) return 0; int toWrite=Math.Min(src.Length, AvailableToWrite); if (toWrite<=0) return 0;
-        int w=_write; int first=Math.Min(toWrite, Capacity-w); src.Slice(0, first).CopyTo(_buf.AsSpan(w, first));
-        int remain=toWrite-first; if(remain>0) src.Slice(first, remain).CopyTo(_buf.AsSpan(0, remain));
-        Volatile.Write(ref _write, (w+toWrite)%Capacity); return toWrite; }
-    public int Read(Span<byte> dst){
-        if (_disposed){ dst.Clear(); return 0; } int toRead=Math.Min(dst.Length, AvailableToRead); int r=_read;
-        int first=Math.Min(toRead, Capacity-r); _buf.AsSpan(r, first).CopyTo(dst.Slice(0, first));
-        int remain=toRead-first; if(remain>0) _buf.AsSpan(0, remain).CopyTo(dst.Slice(first));
-        Volatile.Write(ref _read, (r+toRead)%Capacity); return toRead; }
-    public void Dispose(){ if(!_disposed){ _disposed=true; ArrayPool<byte>.Shared.Return(_buf); } }
-}
+    {
+        private readonly byte[] _buf;
+        private int _read, _write;
+        private volatile bool _disposed;
 
-internal sealed class RingReaderWaveProvider : NAudio.Wave.IWaveProvider
+        public SpscRingBuffer(int capacityBytes)
+        {
+            _buf = new byte[capacityBytes < 4096 ? 4096 : capacityBytes];
+        }
+
+        public int Capacity { get { return _buf.Length; } }
+
+        public int AvailableToRead
+        {
+            get
+            {
+                int w = System.Threading.Volatile.Read(ref _write);
+                int r = System.Threading.Volatile.Read(ref _read);
+                return (w >= r) ? (w - r) : (Capacity - (r - w));
+            }
+        }
+
+        public int AvailableToWrite { get { return Capacity - AvailableToRead - 1; } }
+
+        public int Write(byte[] src, int offset, int count)
+        {
+            if (_disposed) return 0;
+            if (src == null) return 0;
+            if (offset < 0) offset = 0;
+            if (count < 0) count = 0;
+            if (offset + count > src.Length) count = src.Length - offset;
+
+            int toWrite = System.Math.Min(count, AvailableToWrite);
+            if (toWrite <= 0) return 0;
+            int w = _write;
+            int first = System.Math.Min(toWrite, Capacity - w);
+            System.Array.Copy(src, offset, _buf, w, first);
+            int remain = toWrite - first;
+            if (remain > 0)
+                System.Array.Copy(src, offset + first, _buf, 0, remain);
+            System.Threading.Volatile.Write(ref _write, (w + toWrite) % Capacity);
+            return toWrite;
+        }
+
+        public int Read(byte[] dst, int offset, int count)
+        {
+            if (_disposed) { if (dst != null && count > 0) System.Array.Clear(dst, offset, count); return 0; }
+            if (dst == null) return 0;
+            if (offset < 0) offset = 0;
+            if (count < 0) count = 0;
+            if (offset + count > dst.Length) count = dst.Length - offset;
+
+            int toRead = System.Math.Min(count, AvailableToRead);
+            int r = _read;
+            int first = System.Math.Min(toRead, Capacity - r);
+            System.Array.Copy(_buf, r, dst, offset, first);
+            int remain = toRead - first;
+            if (remain > 0)
+                System.Array.Copy(_buf, 0, dst, offset + first, remain);
+            System.Threading.Volatile.Write(ref _read, (r + toRead) % Capacity);
+            return toRead;
+        }
+
+        public void Dispose()
+        {
+            _disposed = true;
+        }
+    }
+
+    internal sealed class RingReaderWaveProvider : NAudio.Wave.IWaveProvider
+    {
+        private readonly SpscRingBuffer _ring; private readonly bool _readFully;
+        public NAudio.Wave.WaveFormat WaveFormat { get; }
+        public RingReaderWaveProvider(SpscRingBuffer ring, NAudio.Wave.WaveFormat fmt, bool readFully){ _ring = ring; WaveFormat = fmt; _readFully = readFully; }
+        public int Read(byte[] buffer, int offset, int count){
+            int n=_ring.Read(buffer, offset, count);
+            if (_readFully && n < count){ System.Array.Clear(buffer, offset+n, count-n); return count; }
+            return n;
+        }
+    }
+
+    internal sealed class WasapiExclusiveRenderer : IDisposable
+ : NAudio.Wave.IWaveProvider
 {
     private readonly SpscRingBuffer _ring; private readonly bool _readFully;
     public NAudio.Wave.WaveFormat WaveFormat { get; }
@@ -70,7 +131,7 @@ internal sealed class WasapiExclusiveRenderer : IDisposable
     }
     private void Loop(){
         int bufFrames = _cli.BufferSize; int frameBytes = _fmt.BlockAlign;
-        int maxBytes = bufFrames * frameBytes; var temp = System.Buffers.ArrayPool<byte>.Shared.Rent(maxBytes);
+        int maxBytes = bufFrames * frameBytes; var temp = new byte[maxBytes];
         try{
             while(_run){
                 _evt.WaitOne(); if(!_run) break;
@@ -78,7 +139,7 @@ internal sealed class WasapiExclusiveRenderer : IDisposable
                 int bytesAvail = framesAvail * frameBytes; int left = bytesAvail;
                 while(left > 0){
                     int batch = System.Math.Min(left, maxBytes);
-                    int got = _ring.Read(temp.AsSpan(0, batch));
+                    int got = _ring.Read(temp);
                     if (got < batch && _fillZeros) System.Array.Clear(temp, got, batch-got);
                     System.IntPtr p; _rc.GetBuffer(batch / frameBytes, out p);
                     System.Runtime.InteropServices.Marshal.Copy(temp, 0, p, got);
@@ -90,7 +151,7 @@ internal sealed class WasapiExclusiveRenderer : IDisposable
                     left -= batch;
                 }
             }
-        } finally { System.Buffers.ArrayPool<byte>.Shared.Return(temp); }
+        } finally { System.Buffers.// no pool }
     }
     public void Stop(){ _run=false; try{_evt.Set();}catch{} try{_cli?.Stop();}catch{} try{_th?.Join(500);}catch{} }
     public void Dispose(){ Stop(); _rc?.Dispose(); _cli?.Dispose(); _evt.Dispose(); }
