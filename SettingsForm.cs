@@ -163,14 +163,6 @@ namespace MirrorAudio
             cmbBufModeMain.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbBufModeMain.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
             AddRow(tMain, "缓冲对齐模式",  cmbBufModeMain);
-            // 缓冲池：倍数；兜底；补齐填充
-            var pMainPool = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true };
-            pMainPool.Controls.Add(new Label{ Text="倍数 N =", AutoSize=true, Margin = new Padding(0,6,6,0)});
-            numMainPoolMult.Minimum=1; numMainPoolMult.Maximum=16; numMainPoolMult.Width=60; pMainPool.Controls.Add(numMainPoolMult);
-            pMainPool.Controls.Add(new Label{ Text="兜底(ms) =", AutoSize=true, Margin = new Padding(12,6,6,0)});
-            numMainFloor.Minimum=10; numMainFloor.Maximum=1000; numMainFloor.Width=80; pMainPool.Controls.Add(numMainFloor);
-            chkMainFill.Text="补齐填充"; chkMainFill.AutoSize=true; chkMainFill.Margin=new Padding(12,6,0,0); pMainPool.Controls.Add(chkMainFill);
-            AddRow(tMain, "缓冲池（主）", pMainPool);
 
             cmbResampMain.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampMain.Items.AddRange(new object[]{ "60", "50", "40", "30" });
@@ -204,13 +196,6 @@ namespace MirrorAudio
             cmbBufModeAux.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbBufModeAux.Items.AddRange(new object[]{ "默认对齐", "最小对齐" });
             AddRow(tAux, "缓冲对齐模式",  cmbBufModeAux);
-            var pAuxPool = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true };
-            pAuxPool.Controls.Add(new Label{ Text="倍数 N =", AutoSize=true, Margin = new Padding(0,6,6,0)});
-            numAuxPoolMult.Minimum=1; numAuxPoolMult.Maximum=16; numAuxPoolMult.Width=60; pAuxPool.Controls.Add(numAuxPoolMult);
-            pAuxPool.Controls.Add(new Label{ Text="兜底(ms) =", AutoSize=true, Margin = new Padding(12,6,6,0)});
-            numAuxFloor.Minimum=10; numAuxFloor.Maximum=1000; numAuxFloor.Width=80; pAuxPool.Controls.Add(numAuxFloor);
-            chkAuxFill.Text="补齐填充"; chkAuxFill.AutoSize=true; chkAuxFill.Margin=new Padding(12,6,0,0); pAuxPool.Controls.Add(chkAuxFill);
-            AddRow(tAux, "缓冲池（副）", pAuxPool);
 
             cmbResampAux.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbResampAux.Items.AddRange(new object[]{ "60", "50", "40", "30" });
@@ -235,11 +220,9 @@ namespace MirrorAudio
             btnOk.Text = "保存"; btnCancel.Text = "取消";
             AcceptButton = btnOk; CancelButton = btnCancel;
             btnOk.DialogResult = DialogResult.OK; btnCancel.DialogResult = DialogResult.Cancel;
-            btnResetPool.Text = "恢复初始值";
-            btnResetPool.Click += (s, e) => { numMainPoolMult.Value = 4; numMainFloor.Value = 80; chkMainFill.Checked = true; numAuxPoolMult.Value = 4; numAuxFloor.Value = 80; chkAuxFill.Checked = true; };
             btnOk.Click += (s, e) => SaveAndClose();
             Controls.Add(pnlButtons);
-            pnlButtons.Controls.Add(btnOk); pnlButtons.Controls.Add(btnCancel); pnlButtons.Controls.Add(btnResetPool);
+            pnlButtons.Controls.Add(btnOk); pnlButtons.Controls.Add(btnCancel);
 
             LoadDevices();
             LoadConfig(cur);
@@ -282,9 +265,6 @@ namespace MirrorAudio
             numRateMain.Value = Clamp(cur.MainRate, 44100, 384000);
             numBitsMain.Value = Clamp(cur.MainBits, 16, 32);
             numBufMain.Value  = Clamp(cur.MainBufMs, 4, 200);
-            numMainPoolMult.Value = Clamp(cur.MainPoolMultiplier, 1, 16);
-            numMainFloor.Value    = Clamp(cur.MainPoolFloorMs, 10, 1000);
-            chkMainFill.Checked   = cur.MainFill;
             cmbShareMain.SelectedIndex = cur.MainShare == ShareModeOption.Auto ? 0 : (cur.MainShare == ShareModeOption.Exclusive ? 1 : 2);
             cmbSyncMain .SelectedIndex = cur.MainSync  == SyncModeOption.Auto  ? 0 : (cur.MainSync  == SyncModeOption.Event     ? 1 : 2);
             cmbBufModeMain.SelectedIndex = cur.MainBufMode == BufferAlignMode.MinAlign ? 1 : 0;
@@ -388,13 +368,7 @@ namespace MirrorAudio
                 MainResamplerQuality = int.Parse((string)(cmbResampMain.SelectedItem ?? "60")),
                 AuxResamplerQuality  = int.Parse((string)(cmbResampAux .SelectedItem ?? "30")),
                 MainForceInternalResamplerInShared = chkMainForceInShared.Checked,
-                AuxForceInternalResamplerInShared  = chkAuxForceInShared .Checked,
-                MainPoolMultiplier = (int)numMainPoolMult.Value,
-                MainPoolFloorMs    = (int)numMainFloor.Value,
-                MainFill           = chkMainFill.Checked,
-                AuxPoolMultiplier  = (int)numAuxPoolMult.Value,
-                AuxPoolFloorMs     = (int)numAuxFloor.Value,
-                AuxFill            = chkAuxFill.Checked
+                AuxForceInternalResamplerInShared  = chkAuxForceInShared .Checked
             };
             DialogResult = DialogResult.OK;
             Close();
