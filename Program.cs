@@ -15,120 +15,138 @@ using NAudio.Wave;
 namespace MirrorAudio
 {
 
-// === Minimal SPSC ring buffer + BufferedWaveProvider (ring-backed) ===
-internal sealed class SpscRingBuffer
-{
-    private readonly byte[] _buf;
-    private int _read, _write;
-    public SpscRingBuffer(int capacityBytes)
+    // === Minimal SPSC ring buffer for audio (bytes), frame-aligned ===
+    internal sealed class SpscRingBuffer : IDisposable
     {
-        if (capacityBytes < 4096) capacityBytes = 4096;
-        _buf = new byte[capacityBytes];
-        _read = 0; _write = 0;
-    }
-    public int Capacity { get { return _buf.Length; } }
-    public int AvailableToRead
-    {
-        get
-        {
-            int w = System.Threading.Volatile.Read(ref _write);
-            int r = System.Threading.Volatile.Read(ref _read);
-            return (w >= r) ? (w - r) : (Capacity - (r - w));
-        }
-    }
-    public int AvailableToWrite { get { return Capacity - AvailableToRead - 1; } }
-    public int Write(byte[] src, int offset, int count)
-    {
-        if (src == null || count <= 0) return 0;
-        if (offset < 0) offset = 0;
-        if (offset + count > src.Length) count = src.Length - offset;
-        int toWrite = System.Math.Min(count, AvailableToWrite);
-        if (toWrite <= 0) return 0;
-        int w = _write;
-        int first = System.Math.Min(toWrite, Capacity - w);
-        System.Array.Copy(src, offset, _buf, w, first);
-        int remain = toWrite - first;
-        if (remain > 0)
-            System.Array.Copy(src, offset + first, _buf, 0, remain);
-        System.Threading.Volatile.Write(ref _write, (w + toWrite) % Capacity);
-        return toWrite;
-    }
-    public int Read(byte[] dst, int offset, int count)
-    {
-        if (dst == null || count <= 0) return 0;
-        if (offset < 0) offset = 0;
-        if (offset + count > dst.Length) count = dst.Length - offset;
-        int toRead = System.Math.Min(count, AvailableToRead);
-        int r = _read;
-        int first = System.Math.Min(toRead, Capacity - r);
-        System.Array.Copy(_buf, r, dst, offset, first);
-        int remain = toRead - first;
-        if (remain > 0)
-            System.Array.Copy(_buf, 0, dst, offset + first, remain);
-        System.Threading.Volatile.Write(ref _read, (r + toRead) % Capacity);
-        return toRead;
-    }
-    public void Clear()
-    {
-        System.Threading.Volatile.Write(ref _read, 0);
-        System.Threading.Volatile.Write(ref _write, 0);
-    }
-}
+        readonly byte[] _buf;
+        readonly int _mask; // capacity power-of-two - 1
+        int _write, _read;
+        public readonly int FrameSizeBytes;
 
-// 注意：此类名与 NAudio 的 BufferedWaveProvider 同名，
-// 由于本文档中未使用完整限定名，优先解析为当前命名空间的类，从而替换其实现为环形缓冲。
-internal sealed class BufferedWaveProvider : IWaveProvider
-{
-    private readonly WaveFormat _format;
-    private SpscRingBuffer _ring;
-    public BufferedWaveProvider(WaveFormat format)
-    {
-        _format = format;
-        _ring = new SpscRingBuffer(4096);
-        this.DiscardOnBufferOverflow = false;
-        this.ReadFully = true;
-        this.BufferDuration = System.TimeSpan.FromMilliseconds(100);
-    }
-    public WaveFormat WaveFormat { get { return _format; } }
-    public bool DiscardOnBufferOverflow { get; set; }
-    public bool ReadFully { get; set; }
-    private int _bufLenBytes;
-    public System.TimeSpan BufferDuration
-    {
-        get { return System.TimeSpan.FromMilliseconds((_bufLenBytes * 1000) / System.Math.Max(1,_format.AverageBytesPerSecond)); }
-        set
+        public SpscRingBuffer(int capacityBytesPow2, int frameSizeBytes)
         {
-            int ms = (int)value.TotalMilliseconds;
-            int bytes = (int)((long)_format.AverageBytesPerSecond * ms / 1000L);
-            if (bytes < 4096) bytes = 4096;
-            _ring = new SpscRingBuffer(bytes);
-            _bufLenBytes = bytes;
+            if ((capacityBytesPow2 & (capacityBytesPow2 - 1)) != 0) throw new ArgumentException("capacity must be power of two");
+            _buf = new byte[capacityBytesPow2]; _mask = capacityBytesPow2 - 1;
+            FrameSizeBytes = frameSizeBytes;
         }
-    }
-    public void AddSamples(byte[] buffer, int offset, int count)
-    {
-        int wrote = _ring.Write(buffer, offset, count);
-        if (wrote < count && !DiscardOnBufferOverflow)
-        {
-            // 丢弃策略：如果不允许丢弃且环已满，尝试覆盖最旧的一部分（简单实现：清空后再写，避免卡死）
-            // 为保持低侵入，采用清空再写的策略（与原库不同，但更可预测）。
-            _ring.Clear();
-            _ring.Write(buffer, offset, System.Math.Min(count, _bufLenBytes - 1));
-        }
-    }
-    public int Read(byte[] buffer, int offset, int count)
-    {
-        int n = _ring.Read(buffer, offset, count);
-        if (ReadFully && n < count)
-        {
-            System.Array.Clear(buffer, offset + n, count - n);
-            return count;
-        }
-        return n;
-    }
-    public void ClearBuffer() { _ring.Clear(); }
-}
+        public int Capacity => _buf.Length;
+        public int Count => _write - _read;
+        public int Free  => Capacity - Count;
 
+        public int Write(ReadOnlySpan<byte> src)
+        {
+            int n = Math.Min(src.Length, Free);
+            int wi = _write & _mask; int first = Math.Min(n, Capacity - wi);
+            src[..first].CopyTo(_buf.AsSpan(wi));
+            if (n - first > 0) src[first:n].CopyTo(_buf.AsSpan(0));
+            System.Threading.Volatile.Write(ref _write, _write + n);
+            return n;
+        }
+        public int Read(Span<byte> dst)
+        {
+            int n = Math.Min(dst.Length, Count);
+            int ri = _read & _mask; int first = Math.Min(n, Capacity - ri);
+            _buf.AsSpan(ri, first).CopyTo(dst);
+            if (n - first > 0) _buf.AsSpan(0, n - first).CopyTo(dst[first..]);
+            System.Threading.Volatile.Write(ref _read, _read + n);
+            return n;
+        }
+        public void Clear() { System.Threading.Volatile.Write(ref _read, 0); System.Threading.Volatile.Write(ref _write, 0); }
+        public void Dispose() { }
+    }
+
+    // === WASAPI push renderer (shared/exclusive, event/polling) using RenderClient and GetCurrentPadding ===
+    internal sealed class WasapiPushRenderer : IDisposable
+    {
+        readonly MMDevice _device;
+        readonly WaveFormat _format;
+        readonly AudioClientShareMode _shareMode;
+        readonly bool _eventMode;
+        readonly long _bufferDuration100ns; // total buffer duration
+        readonly EventWaitHandle _event;
+        readonly SpscRingBuffer _ring;
+        AudioClient _client;
+        AudioRenderClient _render;
+        Thread _thread;
+        volatile bool _running;
+        int _frameBytes;
+
+        public WasapiPushRenderer(MMDevice dev, WaveFormat fmt, AudioClientShareMode share, bool eventMode, int totalBufferMs, SpscRingBuffer ring)
+        {
+            _device = dev; _format = fmt; _shareMode = share; _eventMode = eventMode;
+            _bufferDuration100ns = totalBufferMs * 10000L;
+            _ring = ring;
+            _event = new EventWaitHandle(false, EventResetMode.AutoReset);
+        }
+
+        public void Start()
+        {
+            Stop();
+            _client = _device.AudioClient;
+            var flags = AudioClientStreamFlags.None;
+            if (_eventMode) flags |= AudioClientStreamFlags.EventCallback;
+            if (_shareMode == AudioClientShareMode.Shared) flags |= AudioClientStreamFlags.None; // no AUDCLNT_STREAMFLAGS_NOPERSIST
+
+            // For Exclusive: set periodicity = bufferDuration; For Shared: periodicity = 0
+            long periodicity = (_shareMode == AudioClientShareMode.Exclusive) ? _bufferDuration100ns : 0;
+            _client.Initialize(_shareMode, flags, _bufferDuration100ns, periodicity, _format, Guid.Empty);
+            if (_eventMode) _client.SetEventHandle(_event.SafeWaitHandle.DangerousGetHandle());
+
+            _render = _client.AudioRenderClient;
+            _frameBytes = _format.BlockAlign;
+
+            _client.Start();
+            _running = True;
+            _thread = new Thread(RenderLoop) { IsBackground = true, Name = "WasapiPushRenderer" };
+            _thread.Priority = ThreadPriority.Highest;
+            _thread.Start();
+        }
+
+        public void Stop()
+        {
+            _running = False;
+            try { _event.Set(); } catch { }
+            try { _thread?.Join(200); } catch { }
+            try { _client?.Stop(); } catch { }
+            try { _render?.Dispose(); } catch { } _render = null;
+            try { _client?.Dispose(); } catch { } _client = null;
+        }
+
+        void RenderLoop()
+        {
+            var silent = new byte[8192];
+            while (_running)
+            {
+                try
+                {
+                    if (_eventMode) _event.WaitOne(5);
+                    else Thread.Sleep(1);
+
+                    int bufferFrames = _client.BufferSize;
+                    int paddingFrames = _client.GetCurrentPadding();
+                    int framesToWrite = bufferFrames - paddingFrames;
+                    if (framesToWrite <= 0) continue;
+
+                    int bytesToWrite = framesToWrite * _frameBytes;
+                    IntPtr pData = _render.GetBuffer(framesToWrite);
+                    unsafe
+                    {
+                        var dst = new Span<byte>((void*)pData, bytesToWrite);
+                        int got = _ring.Read(dst);
+                        if (got < bytesToWrite)
+                        {
+                            // Fill remainder with silence
+                            silent.AsSpan(0, bytesToWrite - got).CopyTo(dst.Slice(got));
+                        }
+                    }
+                    _render.ReleaseBuffer(framesToWrite, AudioClientBufferFlags.None);
+                }
+                catch { /* swallow to avoid breaking audio */ }
+            }
+        }
+
+        public void Dispose() { try { Stop(); } catch { } try { _event?.Dispose(); } catch { } }
+    }
 
     static class Program
     {
@@ -178,16 +196,6 @@ internal sealed class BufferedWaveProvider : IWaveProvider
         [DataMember] public SyncModeOption MainSync = SyncModeOption.Auto, AuxSync = SyncModeOption.Auto;
         [DataMember] public int MainRate = 192000, MainBits = 24, MainBufMs = 12;
         [DataMember] public int AuxRate = 48000, AuxBits = 16, AuxBufMs = 150;
-
-// 缓冲池参数（倍数/兜底/补齐）
-[DataMember] public int MainPoolMultiplier = 4;
-[DataMember] public int MainPoolFloorMs = 80;
-[DataMember] public bool MainFill = true;
-
-[DataMember] public int AuxPoolMultiplier = 4;
-[DataMember] public int AuxPoolFloorMs = 80;
-[DataMember] public bool AuxFill = true;
-
         [DataMember] public BufferAlignMode MainBufMode = BufferAlignMode.DefaultAlign;
         [DataMember] public BufferAlignMode AuxBufMode = BufferAlignMode.DefaultAlign;
         [DataMember] public bool AutoStart = false, EnableLogging = false;
@@ -220,35 +228,33 @@ internal sealed class BufferedWaveProvider : IWaveProvider
         public bool MainMultiSRC, AuxMultiSRC;
     }
 
-    
-static class Config
-{
-    public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MirrorAudio");
-    public static readonly string FilePath = Path.Combine(Dir, "settings.json");
-
-    public static AppSettings Load()
+    static class Config
     {
-        try
-        {
-            if (!File.Exists(FilePath)) return new AppSettings();
-            using (var fs = File.OpenRead(FilePath))
-                return (AppSettings)new DataContractJsonSerializer(typeof(AppSettings)).ReadObject(fs);
-        }
-        catch { return new AppSettings(); }
-    }
+        static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MirrorAudio");
+        static readonly string FilePath = Path.Combine(Dir, "settings.json");
 
-    public static void Save(AppSettings s)
-    {
-        try
+        public static AppSettings Load()
         {
-            Directory.CreateDirectory(Dir);
-            using (var fs = File.Create(FilePath))
-                new DataContractJsonSerializer(typeof(AppSettings)).WriteObject(fs, s);
+            try
+            {
+                if (!File.Exists(FilePath)) return new AppSettings();
+                using (var fs = File.OpenRead(FilePath))
+                    return (AppSettings)new DataContractJsonSerializer(typeof(AppSettings)).ReadObject(fs);
+            }
+            catch { return new AppSettings(); }
         }
-        catch { }
-    }
-}
 
+        public static void Save(AppSettings s)
+        {
+            try
+            {
+                if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
+                using (var fs = File.Create(FilePath))
+                    new DataContractJsonSerializer(typeof(AppSettings)).WriteObject(fs, s);
+            }
+            catch { }
+        }
+    }
 
     sealed class TrayApp : IDisposable, IMMNotificationClient
     {
@@ -259,8 +265,7 @@ static class Config
         MMDeviceEnumerator _mm = new MMDeviceEnumerator();
 
         MMDevice _inDev, _outMain, _outAux;
-        IWaveIn _capture; BufferedWaveProvider _bufMain, _bufAux;
-        IWaveProvider _srcMain, _srcAux; WasapiOut _mainOut, _auxOut;
+        IWaveIn _capture; SpscRingBuffer _ringMain, _ringAux; WasapiPushRenderer _mainOut, _auxOut;
         MediaFoundationResampler _resMain, _resAux;
 
         bool _running;
@@ -284,7 +289,7 @@ static class Config
             var miStop = new ToolStripMenuItem("停止(&T)", null, (s, e) => Stop());
             var miSet = new ToolStripMenuItem("设置(&G)...", null, (s, e) => OnSettings());
             var miExit = new ToolStripMenuItem("退出(&X)", null, (s, e) => { Stop(); Application.Exit(); });
-            _menu.Items.AddRange(new ToolStripItem[] { miStart, new ToolStripSeparator(), miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
+            _menu.Items.AddRange(new ToolStripItem[] { miStart, miStop, new ToolStripSeparator(), miSet, new ToolStripSeparator(), miExit });
             _tray.ContextMenuStrip = _menu;
 
             StartOrRestart();
@@ -378,8 +383,8 @@ static class Config
 
             _inFmtStr = Fmt(inFmt);
 
-            _bufMain = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.MainBufMs * 4, 80)) };
-            _bufAux  = new BufferedWaveProvider(inFmt) { DiscardOnBufferOverflow = true, ReadFully = true, BufferDuration = TimeSpan.FromMilliseconds(Math.Max(_cfg.AuxBufMs * 4, 120)) };
+            _ringMain = new SpscRingBuffer(1<<20, inFmt.BlockAlign);
+            _ringAux  = new SpscRingBuffer(1<<20, inFmt.BlockAlign);
 
             ContinueStart(inFmt);
         }
@@ -392,7 +397,7 @@ static class Config
             // ========== 主通道 ==========
             if (_outMain != null)
             {
-            _srcMain = _bufMain; _resMain = null; _mainExclusive = false; _mainEventSyncUsed = false; _mainBufEffectiveMs = _cfg.MainBufMs; _mainFmtStr = "-";
+            _resMain = null; _mainExclusive = false; _mainEventSyncUsed = false; _mainBufEffectiveMs = _cfg.MainBufMs; _mainFmtStr = "-";
             _mainNoSRC = false; _mainResampling = false;
             var desiredMain = new WaveFormat(_cfg.MainRate, _cfg.MainBits, 2);
 
@@ -407,7 +412,7 @@ static class Config
                 bool needChange = (inFmt.SampleRate != desiredMain.SampleRate) || (inFmt.Channels != desiredMain.Channels);
                 if (needChange) _srcMain = _resMain = new MediaFoundationResampler(_bufMain, desiredMain) { ResamplerQuality = _cfg.MainResamplerQuality };
                 int ms = BufAligned(_cfg.MainBufMs, true, _defMainMs, _minMainMs, _cfg.MainBufMode);
-                _mainOut = CreateOut(_outMain, AudioClientShareMode.Exclusive, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
+                _mainOut = new WasapiPushRenderer(_outMain, desiredMain, AudioClientShareMode.Exclusive, (_cfg.MainSync == SyncModeOption.Event), Math.Max(_cfg.MainBufMs * _cfg.MainBufPoolMultiplier, _cfg.MainBufPoolFloorMs), _ringMain);
                 if (_mainOut != null)
                 {
                     _mainExclusive = true; _mainBufEffectiveMs = ms; _mainFmtStr = Fmt(desiredMain); mainTargetFmt = desiredMain;
@@ -431,7 +436,7 @@ static class Config
                     }
                 }
 
-                _mainOut = CreateOut(_outMain, AudioClientShareMode.Shared, _cfg.MainSync, ms, _srcMain, out _mainEventSyncUsed);
+                _mainOut = new WasapiPushRenderer(_outMain, desiredMain, AudioClientShareMode.Exclusive, (_cfg.MainSync == SyncModeOption.Event), Math.Max(_cfg.MainBufMs * _cfg.MainBufPoolMultiplier, _cfg.MainBufPoolFloorMs), _ringMain);
                 if (_mainOut == null)
                 {
                     MessageBox.Show("主通道初始化失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -451,7 +456,7 @@ static class Config
             // ========== 副通道 ==========
             if (_outAux != null)
             {
-            _srcAux = _bufAux; _resAux = null; _auxExclusive = false; _auxEventSyncUsed = false; _auxBufEffectiveMs = _cfg.AuxBufMs; _auxFmtStr = "-";
+            _resAux = null; _auxExclusive = false; _auxEventSyncUsed = false; _auxBufEffectiveMs = _cfg.AuxBufMs; _auxFmtStr = "-";
             _auxNoSRC = false; _auxResampling = false;
             var desiredAux = new WaveFormat(_cfg.AuxRate, _cfg.AuxBits, 2);
 
@@ -466,7 +471,7 @@ static class Config
                 bool needChange = (inFmt.SampleRate != desiredAux.SampleRate) || (inFmt.Channels != desiredAux.Channels);
                 if (needChange) _srcAux = _resAux = new MediaFoundationResampler(_bufAux, desiredAux) { ResamplerQuality = _cfg.AuxResamplerQuality };
                 int ms = BufAligned(_cfg.AuxBufMs, true, _defAuxMs, _minAuxMs, _cfg.AuxBufMode);
-                _auxOut = CreateOut(_outAux, AudioClientShareMode.Exclusive, _cfg.AuxSync, ms, _srcAux, out _auxEventSyncUsed);
+                _auxOut  = new WasapiPushRenderer(_outAux,  desiredAux, AudioClientShareMode.Exclusive, (_cfg.AuxSync  == SyncModeOption.Event),  Math.Max(_cfg.AuxBufMs  * _cfg.AuxBufPoolMultiplier,  _cfg.AuxBufPoolFloorMs),  _ringAux );
                 if (_auxOut != null)
                 {
                     _auxExclusive = true; _auxBufEffectiveMs = ms; _auxFmtStr = Fmt(desiredAux); auxTargetFmt = desiredAux;
@@ -489,7 +494,7 @@ static class Config
                     }
                 }
 
-                _auxOut = CreateOut(_outAux, AudioClientShareMode.Shared, _cfg.AuxSync, ms, _srcAux, out _auxEventSyncUsed);
+                _auxOut  = new WasapiPushRenderer(_outAux,  desiredAux, AudioClientShareMode.Exclusive, (_cfg.AuxSync  == SyncModeOption.Event),  Math.Max(_cfg.AuxBufMs  * _cfg.AuxBufPoolMultiplier,  _cfg.AuxBufPoolFloorMs),  _ringAux );
                 if (_auxOut == null)
                 {
                     MessageBox.Show("副通道初始化失败。", "MirrorAudio", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -510,7 +515,7 @@ static class Config
             try
             {
                 _capture.StartRecording();
-                if (_mainOut != null) _mainOut.Play(); if (_auxOut != null) _auxOut.Play(); _running = true;
+                if (_mainOut != null) _mainOut.Start(); if (_auxOut != null) _auxOut.Start(); _running = true;
             }
             catch (Exception)
             {
@@ -521,8 +526,8 @@ static class Config
 
         void OnIn(object s, WaveInEventArgs e)
         {
-            if (_bufMain != null) _bufMain.AddSamples(e.Buffer, 0, e.BytesRecorded);
-            if (_bufAux  != null) _bufAux .AddSamples(e.Buffer, 0, e.BytesRecorded);
+            if (_ringMain != null) _ringMain.Write(new ReadOnlySpan<byte>(e.Buffer, 0, e.BytesRecorded));
+            if (_ringAux  != null) _ringAux .Write(new ReadOnlySpan<byte>(e.Buffer, 0, e.BytesRecorded);
         }
         void OnStopRec(object s, StoppedEventArgs e)
         {
@@ -550,7 +555,7 @@ static class Config
             try { _auxOut ?.Dispose(); } catch { } _auxOut  = null;
             try { _resMain?.Dispose(); } catch { } _resMain = null;
             try { _resAux ?.Dispose(); } catch { } _resAux  = null;
-            _bufMain = null; _bufAux = null;
+            _ringMain = null; _ringAux = null;
         }
 
         public void Dispose()
@@ -726,40 +731,73 @@ static class Config
         public int Channels = 2;
     }
 
-    
-public static class InputFormatHelper
-{
-    public static WaveFormat BuildWaveFormat(InputFormatStrategy strategy, int customRate, int customBits, int channels)
+    public static class InputFormatHelper
     {
-        switch (strategy)
+        public static WaveFormat BuildWaveFormat(InputFormatStrategy strategy, int customRate, int customBits, int channels)
         {
-            case InputFormatStrategy.Custom:
-                int blockAlign = (customBits / 8) * channels;
-                int avgBytesPerSec = customRate * blockAlign;
-                return WaveFormat.CreateCustomFormat(WaveFormatEncoding.Pcm, customRate, channels, avgBytesPerSec, blockAlign, customBits);
-            case InputFormatStrategy.SystemMix:
-            default:
-                return null;
+            switch (strategy)
+            {
+                case InputFormatStrategy.SystemMix:       return null;
+                case InputFormatStrategy.Specify24_48000: return CreatePcm24(48000, channels);
+                case InputFormatStrategy.Specify24_96000: return CreatePcm24(96000, channels);
+                case InputFormatStrategy.Specify24_192000:return CreatePcm24(192000, channels);
+                case InputFormatStrategy.Specify32f_48000:return WaveFormat.CreateIeeeFloatWaveFormat(48000, channels);
+                case InputFormatStrategy.Specify32f_96000:return WaveFormat.CreateIeeeFloatWaveFormat(96000, channels);
+                case InputFormatStrategy.Specify32f_192000:return WaveFormat.CreateIeeeFloatWaveFormat(192000, channels);
+                case InputFormatStrategy.Custom:
+                    if (customBits >= 32) return WaveFormat.CreateIeeeFloatWaveFormat(customRate, channels);
+                    if (customBits == 24) return CreatePcm24(customRate, channels);
+                    return new WaveFormat(customRate, customBits, channels);
+                default: return null;
+            }
         }
-    }
 
-    public static WaveFormat SelectAcceptedFormat(MMDevice device, InputFormatRequest request,
-        out WaveFormat acceptedFormat, out WaveFormat requestedFormat, out WaveFormat mixFormat, out string log)
-    {
-        var sb = new System.Text.StringBuilder();
-        mixFormat = null; requestedFormat = null; acceptedFormat = null;
-        try { mixFormat = device.AudioClient.MixFormat; } catch { }
-        var desired = BuildWaveFormat(request.Strategy, request.CustomSampleRate, request.CustomBitDepth, request.Channels);
-        requestedFormat = desired;
-        if (request.Strategy == InputFormatStrategy.SystemMix)
+        public static WaveFormat CreatePcm24(int sampleRate, int channels)
         {
-            acceptedFormat = mixFormat; log = sb.ToString(); return mixFormat;
+            return WaveFormat.CreateCustomFormat(WaveFormatEncoding.Extensible, sampleRate, channels, sampleRate * channels * 3, 3, 24);
         }
-        if (desired == null) { log = sb.ToString(); return null; }
-        bool ok = false;
-        try { ok = device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, desired); } catch { }
-        if (ok) { acceptedFormat = desired; log = sb.ToString(); return desired; }
-        acceptedFormat = mixFormat; log = sb.ToString(); return mixFormat;
+
+        public static string Fmt(WaveFormat wf) { return wf == null ? "-" : (wf.SampleRate + "Hz/" + wf.BitsPerSample + "bit/" + wf.Channels + "ch"); }
+
+        public static WaveFormat NegotiateLoopbackFormat(MMDevice device, InputFormatRequest request,
+            out string log, out WaveFormat mixFormat, out WaveFormat acceptedFormat, out WaveFormat requestedFormat)
+        {
+            var sb = new System.Text.StringBuilder();
+            mixFormat = null; acceptedFormat = null; requestedFormat = null;
+            try { mixFormat = device.AudioClient.MixFormat; } catch { }
+
+            var desired = BuildWaveFormat(request.Strategy, request.CustomSampleRate, request.CustomBitDepth, request.Channels);
+            requestedFormat = desired;
+
+            if (mixFormat != null) sb.AppendLine("Device Mix: " + Fmt(mixFormat));
+            if (desired == null)
+            {
+                sb.AppendLine("Request: SystemMix (use engine-provided mix).");
+                acceptedFormat = mixFormat;
+                log = sb.ToString();
+                return null;
+            }
+
+            WaveFormatExtensible closest = null;
+            bool ok = false;
+            try { ok = device.AudioClient.IsFormatSupported(AudioClientShareMode.Shared, desired, out closest); } catch { ok = false; }
+            sb.AppendLine("Request: " + Fmt(desired) + " -> Supported: " + (ok ? "Yes" : "No"));
+
+            if (!ok && closest != null)
+            {
+                acceptedFormat = closest;
+                sb.AppendLine("Closest: " + Fmt(closest));
+                log = sb.ToString();
+                return closest;
+            }
+            if (ok)
+            {
+                acceptedFormat = desired;
+                log = sb.ToString();
+                return desired;
+            }
+            log = sb.ToString();
+            return null;
+        }
     }
-}
 }
